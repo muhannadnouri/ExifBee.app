@@ -3,6 +3,7 @@
 use super::argv::{Args, ArgsError};
 use super::process::{self, CancelToken, RunError};
 use super::resolver::ExifTool;
+use crate::domain::metadata::{MetadataValue, StructField, TagEntry};
 use serde::Serialize;
 use serde_json::{Map, Value};
 use std::fmt;
@@ -14,7 +15,12 @@ const MAX_READ_OUTPUT: usize = 32 * 1024 * 1024;
 
 /// `-G1:4` keys every tag by group and copy number (`IFD0:Make`, `XMP-tiff:Copy1:Make`), so
 /// same-name tags stay distinct; `-G4` alone drops the group name (SPEC §4.3, DEC-015).
-pub const READ_OPTIONS: &[&str] = &["-json", "-a", "-G1:4", "-s"];
+pub const READ_OPTIONS: &[&str] = &["-json", "-a", "-G1:4", "-s", "-struct"];
+/// Quote every JSON value, so numbers keep ExifTool's exact text (DEC-019).
+pub const READ_API: &str = "StructFormat=JSONQ";
+/// Pathological-output guards on top of the byte cap (S2-T05).
+pub const MAX_TAGS_PER_FILE: usize = 100_000;
+pub const MAX_NESTING: usize = 32;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -24,8 +30,8 @@ pub struct FileMetadata {
     /// ExifTool's per-file `Error`; the read still returns whatever ExifTool recognized.
     pub error: Option<String>,
     pub warnings: Vec<String>,
-    /// Group-qualified tags in ExifTool's output order.
-    pub tags: Map<String, Value>,
+    /// Every tag in ExifTool's output order, with full identity and typed value.
+    pub tags: Vec<TagEntry>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,7 +54,10 @@ impl std::error::Error for ReadError {}
 
 /// The exact arguments a single-file read runs (also what a "copy command" view should show).
 pub fn read_args(path: &Path) -> Result<Args, ArgsError> {
-    Args::new().options(READ_OPTIONS).files([path])
+    Args::new()
+        .options(READ_OPTIONS)
+        .api(READ_API)
+        .files([path])
 }
 
 /// Reads one file's metadata with `-json -a -G1:4 -s -- <path>` (DEC-015).
@@ -105,39 +114,70 @@ pub fn read_metadata(tool: &ExifTool, path: &Path) -> Result<FileMetadata, ReadE
             stderr
         }));
     }
-    let mut files: Vec<Map<String, Value>> =
-        serde_json::from_slice(&output.stdout).map_err(|error| {
-            ReadError::ProcessFailure(format!("unexpected ExifTool output: {error}"))
-        })?;
+    parse_output(&output.stdout)
+}
+
+/// Turns `-json -a -G1:4 -s -struct -api StructFormat=JSONQ` output for one file into a
+/// [`FileMetadata`] (S2-T05).
+///
+/// Flow: parse the JSON array (exactly one object) → take `SourceFile` → each remaining key
+/// becomes a [`TagEntry`] (identity from the key, typed value from the JSON) → collect ExifTool's
+/// own `Error`/`Warning` tags for the file.
+///
+/// Gotchas:
+/// - Keys are `Group1:Name` or `Group1:CopyN:Name`; anything else is rejected rather than guessed.
+/// - With JSONQ every scalar is a string; a bare JSON number, bool or null means the output was
+///   not produced with the expected options and is rejected, so values are never silently
+///   rounded.
+/// - `(Binary data N bytes, use -b option to extract)` is ExifTool's placeholder for bytes it did
+///   not print; it becomes [`MetadataValue::Binary`]. Text ExifTool could not encode as UTF-8 is
+///   already replaced by `?` upstream without `-b` (recorded in SPEC §4.4).
+/// - Limits: more than [`MAX_TAGS_PER_FILE`] tags or nesting deeper than [`MAX_NESTING`] is
+///   rejected as pathological; the byte cap is enforced earlier by the executor.
+pub fn parse_output(stdout: &[u8]) -> Result<FileMetadata, ReadError> {
+    let failure = |message: String| ReadError::ProcessFailure(message);
+    let mut files: Vec<Map<String, Value>> = serde_json::from_slice(stdout)
+        .map_err(|error| failure(format!("unexpected ExifTool output: {error}")))?;
     if files.len() != 1 {
-        return Err(ReadError::ProcessFailure(format!(
+        return Err(failure(format!(
             "expected metadata for one file, got {}",
             files.len()
         )));
     }
-    let mut tags = files.remove(0);
-    let source_file = match tags.shift_remove("SourceFile") {
+    let mut object = files.remove(0);
+    let source_file = match object.shift_remove("SourceFile") {
         Some(Value::String(source)) => source,
-        _ => {
-            return Err(ReadError::ProcessFailure(
-                "ExifTool output has no SourceFile".into(),
-            ))
-        }
+        _ => return Err(failure("ExifTool output has no SourceFile".into())),
     };
+    if object.len() > MAX_TAGS_PER_FILE {
+        return Err(failure(format!(
+            "ExifTool reported {} tags for one file, more than the {MAX_TAGS_PER_FILE} limit",
+            object.len()
+        )));
+    }
 
-    let text = |value: &Value| {
-        value
-            .as_str()
-            .map_or_else(|| value.to_string(), String::from)
-    };
-    let mut error = None;
-    let mut warnings = Vec::new();
-    for (key, value) in &tags {
-        if key.starts_with("ExifTool:") && key.ends_with(":Error") {
-            error.get_or_insert_with(|| text(value));
-        } else if key.starts_with("ExifTool:") && key.ends_with(":Warning") {
-            warnings.push(text(value));
+    let mut tags = Vec::with_capacity(object.len());
+    let (mut error, mut warnings) = (None, Vec::new());
+    for (key, value) in object {
+        let (group1, copy, name) =
+            split_key(&key).ok_or_else(|| failure(format!("unexpected tag key {key:?}")))?;
+        let value = typed(value, 0).map_err(|problem| failure(format!("{key}: {problem}")))?;
+        if group1 == "ExifTool" {
+            if let MetadataValue::Text { text } = &value {
+                match name {
+                    "Error" => _ = error.get_or_insert_with(|| text.clone()),
+                    "Warning" => warnings.push(text.clone()),
+                    _ => {}
+                }
+            }
         }
+        tags.push(TagEntry {
+            group1: group1.into(),
+            copy,
+            name: name.into(),
+            value,
+            key,
+        });
     }
     Ok(FileMetadata {
         source_file,
@@ -145,4 +185,58 @@ pub fn read_metadata(tool: &ExifTool, path: &Path) -> Result<FileMetadata, ReadE
         warnings,
         tags,
     })
+}
+
+/// `IFD0:Make` → (`IFD0`, None, `Make`); `XMP-tiff:Copy1:Make` → (`XMP-tiff`, Some(1), `Make`).
+fn split_key(key: &str) -> Option<(&str, Option<u32>, &str)> {
+    let parts: Vec<&str> = key.split(':').collect();
+    let valid = |part: &&str| !part.is_empty();
+    match parts.as_slice() {
+        [group, name] if valid(group) && valid(name) => Some((group, None, name)),
+        [group, copy, name] if valid(group) && valid(name) => {
+            Some((group, Some(copy.strip_prefix("Copy")?.parse().ok()?), name))
+        }
+        _ => None,
+    }
+}
+
+fn typed(value: Value, depth: usize) -> Result<MetadataValue, String> {
+    if depth > MAX_NESTING {
+        return Err(format!("nested deeper than {MAX_NESTING} levels"));
+    }
+    Ok(match value {
+        Value::String(text) => match binary_length(&text) {
+            Some(byte_length) => MetadataValue::Binary { byte_length },
+            None => MetadataValue::Text { text },
+        },
+        Value::Array(items) => MetadataValue::List {
+            items: items
+                .into_iter()
+                .map(|item| typed(item, depth + 1))
+                .collect::<Result<_, _>>()?,
+        },
+        Value::Object(fields) => MetadataValue::Structure {
+            fields: fields
+                .into_iter()
+                .map(|(name, value)| {
+                    Ok(StructField {
+                        name,
+                        value: typed(value, depth + 1)?,
+                    })
+                })
+                .collect::<Result<_, String>>()?,
+        },
+        other => {
+            return Err(format!(
+                "unquoted JSON value {other} (expected StructFormat=JSONQ)"
+            ))
+        }
+    })
+}
+
+/// Recognizes `(Binary data 765 bytes, use -b option to extract)`.
+fn binary_length(text: &str) -> Option<Option<u64>> {
+    let rest = text.strip_prefix("(Binary data ")?;
+    let (count, tail) = rest.split_once(' ')?;
+    tail.starts_with("bytes").then(|| count.parse().ok())
 }

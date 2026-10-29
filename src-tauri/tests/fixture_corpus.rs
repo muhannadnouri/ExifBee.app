@@ -66,6 +66,22 @@ const EXPECTED: &[(&str, &[&str])] = &[
             r#"-XMP-dc:Description="><svg onload="window.__pwned=3"></svg>"#,
         ],
     ),
+    (
+        "palette.png",
+        &[
+            "-File:FileType=PNG",
+            "-PNG:ColorType=Palette",
+            "-PNG:Palette=(Binary data 768 bytes, use -b option to extract)",
+        ],
+    ),
+    (
+        "numbers.xmp",
+        &[
+            "-XMP-dc:Identifier=007",
+            "-XMP-dc:Source=13.50",
+            "-XMP-dc:Format=1e3",
+        ],
+    ),
 ];
 
 fn fixture_dir() -> PathBuf {

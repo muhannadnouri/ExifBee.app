@@ -94,32 +94,57 @@ function jpeg() {
   ]);
 }
 
-function png() {
+/** 1×1 PNG: `colorType` 0 (grey) or 3 (palette), one `pixel` byte, extra chunks before IDAT. */
+function pngImage(colorType, pixel, chunks) {
   const chunk = (type, body) => {
     const typed = Buffer.concat([Buffer.from(type, 'latin1'), body]);
     return Buffer.concat([be32(body.length), typed, be32(crc32(typed))]);
   };
-  // One grey pixel: filter byte 0 + value 0x80, wrapped as an uncompressed (stored) zlib stream.
-  const raw = Buffer.from([0x00, 0x80]);
-  const adler = (1 + 0 + 0x80 + ((1 + 0x81) << 16)) >>> 0;
+  // Filter byte 0 + the pixel, wrapped as an uncompressed (stored) zlib stream with Adler-32.
+  const raw = Buffer.from([0x00, pixel]);
+  let [low, high] = [1, 0];
+  for (const byte of raw) {
+    low = (low + byte) % 65521;
+    high = (high + low) % 65521;
+  }
   const idat = Buffer.concat([
     Buffer.from([0x78, 0x01, 0x01, 0x02, 0x00, 0xfd, 0xff]),
     raw,
-    be32(adler),
+    be32(((high << 16) | low) >>> 0),
   ]);
-  const ihdr = Buffer.concat([be32(1), be32(1), Buffer.from([8, 0, 0, 0, 0])]);
+  const ihdr = Buffer.concat([be32(1), be32(1), Buffer.from([8, colorType, 0, 0, 0])]);
   return Buffer.concat([
     Buffer.from('89504e470d0a1a0a', 'hex'),
     chunk('IHDR', ihdr),
-    chunk('tEXt', Buffer.from('Title\0ExifBee PNG title', 'latin1')),
-    chunk(
-      'iTXt',
-      Buffer.concat([Buffer.from('Description\0\0\0\0\0'), Buffer.from(UNICODE, 'utf8')]),
-    ),
+    ...chunks.map(([type, body]) => chunk(type, body)),
     chunk('IDAT', idat),
     chunk('IEND', Buffer.alloc(0)),
   ]);
 }
+
+const png = () =>
+  pngImage(0, 0x80, [
+    ['tEXt', Buffer.from('Title\0ExifBee PNG title', 'latin1')],
+    ['iTXt', Buffer.concat([Buffer.from('Description\0\0\0\0\0'), Buffer.from(UNICODE, 'utf8')])],
+  ]);
+
+/** A paletted PNG: ExifTool reports its PLTE chunk as binary data (`PNG:Palette`). */
+const palettePng = () =>
+  pngImage(3, 0x00, [
+    ['PLTE', Buffer.from(Array.from({ length: 768 }, (_, i) => Math.floor(i / 3)))],
+  ]);
+
+/** Values a float or integer parser would corrupt: leading zeros, trailing zeros, exponents. */
+const NUMBERS_XMP = `<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/">
+   <dc:identifier>007</dc:identifier>
+   <dc:source>13.50</dc:source>
+   <dc:format>1e3</dc:format>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>
+`;
 
 function pdf() {
   const utf16 = (text) =>
@@ -216,6 +241,8 @@ export function fixtures() {
     { name: 'empty.bin', bytes: Buffer.alloc(0) },
     { name: 'truncated.jpg', bytes: fullJpeg.subarray(0, 64) },
     { name: 'hostile.xmp', bytes: Buffer.from(HOSTILE_XMP, 'utf8') },
+    { name: 'palette.png', bytes: palettePng() },
+    { name: 'numbers.xmp', bytes: Buffer.from(NUMBERS_XMP, 'utf8') },
   ];
 }
 

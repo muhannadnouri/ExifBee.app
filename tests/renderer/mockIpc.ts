@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test';
 import type { Commands } from '../../src/lib/ipc';
+import { tagsOf } from '../support/tags';
 
 // Plain shape for addInitScript: the recursive JsonValue in FileMetadata is too deep for
 // Playwright's argument-serialization types (TS2589). Cast back at the typed boundary below.
@@ -16,20 +17,20 @@ export const SAMPLE_READS: MockRead[] = [
     sourceFile: '/home/user/Documents/report.pdf',
     error: 'File format error',
     warnings: [],
-    tags: { 'File:FileType': 'PDF', 'PDF:Title': 'Quarterly report' },
+    tags: tagsOf({ 'File:FileType': 'PDF', 'PDF:Title': 'Quarterly report' }),
   },
   {
     sourceFile: '/home/user/Pictures/IMG_0042.jpg',
     error: null,
     warnings: ['JPEG format error'],
-    tags: {
-      'ExifTool:ExifToolVersion': 13.55,
+    tags: tagsOf({
+      'ExifTool:ExifToolVersion': '13.55',
       'File:FileType': 'JPEG',
       'IFD0:Make': 'Canon',
       'XMP-tiff:Copy1:Make': 'Canon (XMP)',
       'XMP-dc:Title': 'Bee on lavender',
       'XMP-dc:Subject': ['bee', 'fixture'],
-    },
+    }),
   },
 ];
 

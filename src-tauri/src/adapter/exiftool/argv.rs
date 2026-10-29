@@ -54,6 +54,13 @@ impl Args {
         self
     }
 
+    /// Appends `-api <setting>`, e.g. `StructFormat=JSONQ`. Like options, settings are static.
+    pub fn api(mut self, setting: &'static str) -> Self {
+        self.items.push("-api".into());
+        self.items.push(setting.into());
+        self
+    }
+
     /// Ends option parsing with `--` and appends the target files, which must be absolute.
     pub fn files<I, P>(mut self, files: I) -> Result<Self, ArgsError>
     where

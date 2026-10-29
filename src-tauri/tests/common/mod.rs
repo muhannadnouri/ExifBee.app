@@ -1,7 +1,10 @@
 //! Helpers shared by the integration test crates.
 #![allow(dead_code)]
 
+use exifbee_lib::adapter::exiftool::read::FileMetadata;
 use exifbee_lib::adapter::exiftool::resolver::{probe, resolve, ExifTool, DEFAULT_TIMEOUT};
+use exifbee_lib::domain::metadata::MetadataValue;
+use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -61,4 +64,33 @@ pub fn fake_executable(dir: &Path, name: &str, script: &str) -> PathBuf {
         .unwrap();
     assert!(status.success());
     path
+}
+
+/// A typed value as plain JSON, so tests compare against `json!(…)` literals; binary values
+/// become `{"binary": <byte length>}`. Panics if the file has no tag with this key.
+pub fn value(file: &FileMetadata, key: &str) -> Value {
+    fn plain(value: &MetadataValue) -> Value {
+        match value {
+            MetadataValue::Text { text } => json!(text),
+            MetadataValue::List { items } => Value::Array(items.iter().map(plain).collect()),
+            MetadataValue::Structure { fields } => Value::Object(
+                fields
+                    .iter()
+                    .map(|field| (field.name.clone(), plain(&field.value)))
+                    .collect(),
+            ),
+            MetadataValue::Binary { byte_length } => json!({ "binary": byte_length }),
+        }
+    }
+    let tag = file
+        .tags
+        .iter()
+        .find(|tag| tag.key == key)
+        .unwrap_or_else(|| {
+            panic!(
+                "no tag {key} in {:?}",
+                file.tags.iter().map(|t| &t.key).collect::<Vec<_>>()
+            )
+        });
+    plain(&tag.value)
 }

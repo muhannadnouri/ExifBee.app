@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import { mockIpc } from './mockIpc';
+import { tagsOf } from '../support/tags';
 
 // The preview server sends the production CSP from tauri.conf.json (vite.config.ts), so these
 // run under the policy the packaged app enforces.
@@ -73,7 +74,7 @@ test('hostile metadata renders as text and never runs', async ({ page }) => {
       error: null,
       warnings: [],
       sourceFile: '/home/user/<b>evil</b>/hostile.xmp',
-      tags: { 'XMP-dc:Title': HOSTILE_TITLE, 'XMP-dc:Description': HOSTILE_DESCRIPTION },
+      tags: tagsOf({ 'XMP-dc:Title': HOSTILE_TITLE, 'XMP-dc:Description': HOSTILE_DESCRIPTION }),
     },
   ]);
   await page.goto('/');

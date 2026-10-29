@@ -7,6 +7,9 @@ import { toAppError } from './errors';
 
 export type { AppError, AppInfo, ExifToolStatus, FileMetadata };
 export type { ErrorKind } from './bindings/ErrorKind';
+export type { MetadataValue } from './bindings/MetadataValue';
+export type { StructField } from './bindings/StructField';
+export type { TagEntry } from './bindings/TagEntry';
 
 /**
  * Every Rust command and its result type (DEC-018). Payload types are generated from Rust by

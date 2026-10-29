@@ -1,0 +1,30 @@
+.metadata-binary {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.metadata-list {
+  margin: 0;
+  padding-inline-start: 1.25rem;
+}
+
+.metadata-structure {
+  margin: 0;
+  display: grid;
+  gap: 0.125rem;
+}
+
+.metadata-structure > div {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0 0.75rem;
+}
+
+.metadata-structure dt {
+  color: var(--text-muted);
+}
+
+.metadata-structure dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}

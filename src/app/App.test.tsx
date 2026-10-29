@@ -2,6 +2,7 @@
 import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tagsOf } from '../../tests/support/tags';
 import type { ExifToolStatus, FileMetadata } from '../lib/ipc';
 import { App, DEFAULT_LAYOUT, FILES_WIDTH, LAYOUT_KEY, loadLayout } from './App';
 
@@ -37,7 +38,7 @@ const file = (sourceFile: string, extra: Partial<FileMetadata> = {}): FileMetada
   sourceFile,
   error: null,
   warnings: [],
-  tags: { 'File:FileType': 'JPEG', 'XMP-dc:Title': '<img src=x onerror=alert(1)>' },
+  tags: tagsOf({ 'File:FileType': 'JPEG', 'XMP-dc:Title': '<img src=x onerror=alert(1)>' }),
   ...extra,
 });
 

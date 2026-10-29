@@ -1,8 +1,7 @@
 import { ErrorNotice } from '../../components/ErrorNotice';
 import type { AppError, FileMetadata } from '../../lib/ipc';
+import { MetadataValueView } from './MetadataValueView';
 import './MetadataInspector.css';
-
-const display = (value: unknown) => (typeof value === 'string' ? value : JSON.stringify(value));
 
 type Props = { file: FileMetadata | null; failure: AppError | null; reading: boolean };
 
@@ -39,10 +38,12 @@ export function MetadataInspector({ file, failure, reading }: Props) {
           </tr>
         </thead>
         <tbody>
-          {Object.entries(file.tags).map(([key, value]) => (
-            <tr key={key}>
-              <th scope="row">{key}</th>
-              <td>{display(value)}</td>
+          {file.tags.map((tag) => (
+            <tr key={tag.key}>
+              <th scope="row">{tag.key}</th>
+              <td>
+                <MetadataValueView value={tag.value} />
+              </td>
             </tr>
           ))}
         </tbody>
