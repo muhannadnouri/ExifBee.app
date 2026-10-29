@@ -1,6 +1,6 @@
 ---
 title: ExifBee — Software Design & Delivery Specification
-spec_version: 1.0.0
+spec_version: 1.0.1
 status: approved-baseline-for-implementation
 created: 2026-10-28
 product: ExifBee
@@ -43,7 +43,7 @@ stack: Tauri v2 / Rust / React / TypeScript
 
 - Requirements: `FR-###` functional, `UX-###` experience, `SEC-###` security/safety, `NFR-###` quality/performance, `OPS-###` engineering operations, `PKG-###` packaging, `TST-###` testing.
 - Tasks: `S0-T01`, `S1-T02`, etc. Gate identifiers: `G0` … `G9`.
-- **Never reuse an ID** after removing a requirement. Mark it deprecated with a reason and replacement; preserve historical references.
+- **Never reuse an ID** after removing a requirement. Mark it deprecated by starting its requirement text with `DEPRECATED:` followed by the reason and replacement; preserve historical references.
 - Task states: `[ ] TODO`, `[ ] ⏳ IN PROGRESS` (append owner/branch), `[ ] ⛔ BLOCKED` (append blocker), `[x] DONE`. Only checked means done. An agent may have **one implementation task in progress** at a time unless specifically delegated independent tasks.
 - All tasks start TODO. Architecture decisions above are already adopted, not completed implementation.
 - A task may be marked DONE only after **all** its listed acceptance criteria pass, applicable automated tests pass, CI is green, manual checks are recorded, and the change is merged/reviewed. If manual evaluation is deliberately deferred, record that explicit exception and leave the *platform release gate* open.
@@ -66,6 +66,9 @@ fn raw_arguments_are_never_sent_to_a_shell() { /* ... */ }
 Rules:
 
 1. `scripts/check-spec-traceability` parses the **requirement-definition table in §2** and `@req` annotations in test code. Fail CI if an annotation refers to a non-existent/deprecated ID, IDs are duplicated in definition rows, or a DONE implementation task with automatable criteria has no matching requirement-linked tests. Manual approvals remain a human review responsibility, not something a parser can certify.
+   - An annotation is a code comment line whose text starts with `@req`, followed by IDs separated by commas or spaces.
+   - A requirement is *automatable* when its §2 evidence type names a runnable kind of evidence (unit, integration, E2E, UI, CI, benchmark, traceability, adversarial, screenshot, a11y, perf, smoke, matrix). A DONE task needs at least one of its automatable evidence IDs annotated in code; tasks whose evidence is only manual, audit or review are exempt.
+   - The checker also validates frontmatter, task status syntax (§0.2), duplicate task IDs, and references to unknown requirements, tasks (`S#-T##`) and backticked gates. Run it with `npm run test:traceability`.
 2. **A completed testable requirement must have at least one actual automated assertion.** No test may satisfy a requirement solely by checking that a source file or function name exists. Human-only UX/accessibility criteria have a recorded manual checklist and a justified exemption.
 3. CI generates a transient coverage report/JSON artifact mapping requirement IDs → test files → test status. **Do not commit generated coverage Markdown** or a second hand-maintained mapping.
 4. Unit tests alone do not close behavior involving actual ExifTool/filesystem writes; use integration tests with real ExifTool and fixtures. UI journeys require E2E tests.
@@ -86,7 +89,7 @@ For every task:
 
 ### 0.5 Versioning and change control
 
-- This is **SDD v1.0.0**, the initial implementation baseline. Product release versioning is independent (start application releases at `0.x`).
+- This is **SDD v1.0.1** (v1.0.0 was the initial implementation baseline). Product release versioning is independent (start application releases at `0.x`).
 - Spec `PATCH`: clarifications or test links without behavior change. `MINOR`: additive requirements/tasks. `MAJOR`: materially changed behavior, security guarantees, scope, or compatibility.
 - Record important decisions in the **Decision log (§18)** with date, ID, rationale, tradeoff, and replacement when superseded; don't introduce separate ADR Markdown files.
 - CI validates frontmatter, unique IDs, valid status syntax, task/gate references, and test references. A machine report is generated on demand rather than maintained manually.
@@ -310,7 +313,7 @@ exifbee/
   README.md
   LICENSE
   THIRD_PARTY_NOTICES
-  SPEC.md                         # this exact document (canonical)
+  docs/SPEC.md                    # this exact document (canonical; see DEC-012)
   package.json, package-lock.json # choose one lockfile/tool
   src/
     app/                           # boot, routes/panes, providers, themes
@@ -604,7 +607,7 @@ Record hardware/OS, ExifTool version, cold/warm cache, file sizes, throughput, p
 **Goal:** A reproducible Linux dev environment and proven ExifTool process interface, before UI complexity.
 
 - [x] **S0-T01 — Initialize repository and toolchains.** *(2026-10-28, `feature/linux-mvp`: maintainer confirmed `npm run dev` opens the window on Linux; recorded exception — CI evidence deferred by the maintainer until S0-T05 adds CI.)* Create Tauri v2/Rust/React/TypeScript (strict) repository, package/Rust lockfiles, reproducible `dev`, `build`, `test`, `lint`, `typecheck`, `format` scripts. Configure supported Node/Rust minimums based on actual Tauri v2 requirements and pin CI versions. **Acceptance:** Fresh Linux clone builds/opens window without manual code edits; `npm ci` (or chosen lockfile equivalent) and `cargo test` pass; no cloud service or mobile Tauri targets. **Evidence:** `OPS-001`, `NFR-004` CI build.
-- [ ] **S0-T02 — Install the single-spec workflow.** Save this file as `SPEC.md` without splitting it, implement `scripts/check-spec-traceability` with duplicate/unknown ID detection, status syntax, and completed-task evidence checking; add preflight CI job. **Acceptance:** Intentional malformed IDs, stale test annotations, and checked automatable tasks lacking traceable test evidence make CI fail; correct baseline passes without counting TODO requirements as missing. **Evidence:** `OPS-002`, `TST-008` test harness fixtures.
+- [x] **S0-T02 — Install the single-spec workflow.** *(2026-10-28, `feature/linux-mvp`: maintainer approved; spec kept at `docs/SPEC.md` per DEC-012; recorded exception — preflight CI run deferred by the maintainer.)* Save this file as `SPEC.md` without splitting it, implement `scripts/check-spec-traceability` with duplicate/unknown ID detection, status syntax, and completed-task evidence checking; add preflight CI job. **Acceptance:** Intentional malformed IDs, stale test annotations, and checked automatable tasks lacking traceable test evidence make CI fail; correct baseline passes without counting TODO requirements as missing. **Evidence:** `OPS-002`, `TST-008` test harness fixtures.
 - [ ] **S0-T03 — Prove ExifTool resolver on Linux.** Write a standalone Rust adapter spike that resolves system `exiftool`, runs `-ver`, captures stdout/stderr/status and handles nonexistent executable and version mismatch. Document actual tested version/minimum compatibility in this file after evidence. **Acceptance:** 3 scenarios (installed/missing/invalid binary) have integration tests; no shell calls. **Evidence:** `FR-001`, `SEC-002`.
 - [ ] **S0-T04 — Establish legal and fixture baseline.** Add MIT `LICENSE`, accurate ExifTool attribution/third-party notice placeholder, synthetic/legal fixture generator and checksums; research source metadata licenses. **Acceptance:** no binary ExifTool/Perl in git; fixtures may be redistributed; documented Windows notice review is open until its stage; fixture generation is repeatable. **Evidence:** `OPS-003`, `PKG-004` early audit.
 - [ ] **S0-T05 — Add Linux CI quality gates.** GitHub Actions or equivalent for JS/Rust lint/format/build, real Linux ExifTool installed from package manager, unit/integration and coverage artifact, dependency audit and traceability check. **Acceptance:** Clean CI passes without local mutable dependencies; intentionally failing integration and safety test correctly blocks PR. **Evidence:** `OPS-001`, `TST-001`, `TST-002`.
@@ -1165,6 +1168,7 @@ An AI agent may mark a stage complete only after **all** stage task criteria, te
 | DEC-009 | 2026-10-28 | Light/dark/system with semantic theme tokens | Desktop accessibility and usability | Active |
 | DEC-010 | 2026-10-28 | Advanced ExifTool arguments, **not** general shell | Preserve broad capability without arbitrary command execution | Active |
 | DEC-011 | 2026-10-28 | MIT ExifBee source with separate third-party notices | Keep project permissive without relicensing ExifTool | Active |
+| DEC-012 | 2026-10-28 | Canonical SDD lives at `docs/SPEC.md` (S0-T02 and §4.2 originally named root `SPEC.md`) | Maintainer committed it under `docs/`; one canonical file is what matters, not its folder | Active |
 
 **To record a future decision:** add a row with a new `DEC-###` ID, date, adopted choice, tradeoff and supersession reference; edit relevant requirement, task and tests together. Do not erase a superseded decision or create a separate `.md` ADR file.
 
@@ -1196,4 +1200,4 @@ Use official upstream sources when implementing or updating behaviors. APIs and 
 
 **A successful SDD process is not the number of checked boxes.** It is an auditable invariant: requirements remain stable and intentional, tests assert user-visible behavior, CI verifies those tests, release gates reflect the platform actually exercised, and documentation stays small enough to remain accurate.
 
-**End of ExifBee SDD v1.0.0.**
+**End of ExifBee SDD v1.0.1.**
