@@ -13,4 +13,7 @@ name = "exifbee_lib"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
 tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"

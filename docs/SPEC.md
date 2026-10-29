@@ -1,6 +1,6 @@
 ---
 title: ExifBee — Software Design & Delivery Specification
-spec_version: 1.0.5
+spec_version: 1.0.6
 status: approved-baseline-for-implementation
 created: 2026-10-28
 product: ExifBee
@@ -89,7 +89,7 @@ For every task:
 
 ### 0.5 Versioning and change control
 
-- This is **SDD v1.0.5** (v1.0.0 was the initial implementation baseline). Product release versioning is independent (start application releases at `0.x`).
+- This is **SDD v1.0.6** (v1.0.0 was the initial implementation baseline). Product release versioning is independent (start application releases at `0.x`).
 - Spec `PATCH`: clarifications or test links without behavior change. `MINOR`: additive requirements/tasks. `MAJOR`: materially changed behavior, security guarantees, scope, or compatibility.
 - Record important decisions in the **Decision log (§18)** with date, ID, rationale, tradeoff, and replacement when superseded; don't introduce separate ADR Markdown files.
 - CI validates frontmatter, unique IDs, valid status syntax, task/gate references, and test references. A machine report is generated on demand rather than maintained manually.
@@ -414,7 +414,7 @@ type JobEvent = {
 };
 ```
 
-**Important:** ExifTool output is heterogeneous. `-j -G4 -s` helps avoid duplicate tag-name collisions; distinguish `SourceFile`, tag group families, numeric/raw representation, embedded documents and repeated instances. Some outputs contain binary data, arrays or nested XMP. The actual domain model must preserve enough identity, order and raw fidelity to avoid mistaken edits. Do not assume JSON property name alone is a unique writable tag target. Discover writability at tag + format + group combination when possible; if unknown, never silently promise it.
+**Important:** ExifTool output is heterogeneous. `-j -a -G1:4 -s` avoids duplicate tag-name collisions (keys like `IFD0:Make` and `XMP-tiff:Copy1:Make`; `-G4` alone drops the group name, see DEC-015); distinguish `SourceFile`, tag group families, numeric/raw representation, embedded documents and repeated instances. Some outputs contain binary data, arrays or nested XMP. The actual domain model must preserve enough identity, order and raw fidelity to avoid mistaken edits. Do not assume JSON property name alone is a unique writable tag target. Discover writability at tag + format + group combination when possible; if unknown, never silently promise it.
 
 Recommended typed command boundaries:
 
@@ -445,6 +445,13 @@ No `execute_arbitrary_command(command: string)`, `read_any_path(path)` or `exec_
 - Reads should prefer structured JSON in bounded batches (for example 50–200 files initially, configurable after benchmarking) with batched progress. CSV output can buffer large datasets; do not use it as the internal canonical read format.
 - Writes may allocate ExifTool's own temp files; surface disk-space failures and interruption semantics, and do not claim application-level atomicity across multi-file jobs.
 - For `-stay_open`, use a dedicated serialized request dispatcher, request IDs/ready markers, single-writer command stream, response framing, worker restart on protocol desynchronization, and deterministic shutdown. No mixing stdout from independent jobs.
+- **Recorded by S0-T06 (2026-10-28), ExifTool 13.55 on Linux:**
+  - A file ExifTool cannot parse (e.g. empty) still yields JSON with `ExifTool:Error`, but the exit status is 1; per-file outcome therefore comes from the JSON, and the exit status only matters when no JSON is printed (e.g. `Error: File not found` on stderr).
+  - Passing a directory makes ExifTool read every file in it, so a single-file read rejects non-regular files before spawning.
+  - Absolute paths never begin with `-`; reads pass `--` before the path as well. Hostile names (quotes, `;`, `$()`, backticks, globs, newline, leading hyphen, Unicode) and >1 KiB paths round-trip unchanged in `SourceFile`.
+  - Unquoted JSON numbers lose their text form when parsed as floating point (`13.50` → `13.5`); S2-T05 must keep the raw number text (e.g. `serde_json` `arbitrary_precision`) to meet the `raw` fidelity of §4.3.
+  - On a killed child, a grandchild can keep the output pipes open (e.g. Ubuntu's dash `/bin/sh` does not exec the last command), so the runner returns without waiting for EOF; process-group termination belongs to S2-T03.
+  - The native dialog is opened from Rust (`tauri-plugin-dialog`), so the renderer never supplies a filesystem path; no capability file grants plugin permissions, so the renderer cannot call the dialog or `tauri-plugin-fs` (pulled in by the dialog crate) directly.
 
 ### 4.5 Operation planner and file safety
 
@@ -615,8 +622,8 @@ Record hardware/OS, ExifTool version, cold/warm cache, file sizes, throughput, p
 - [x] **S0-T02 — Install the single-spec workflow.** *(2026-10-28, `feature/linux-mvp`: maintainer approved; spec kept at `docs/SPEC.md` per DEC-012; recorded exception — preflight CI run deferred by the maintainer.)* Save this file as `SPEC.md` without splitting it, implement `scripts/check-spec-traceability` with duplicate/unknown ID detection, status syntax, and completed-task evidence checking; add preflight CI job. **Acceptance:** Intentional malformed IDs, stale test annotations, and checked automatable tasks lacking traceable test evidence make CI fail; correct baseline passes without counting TODO requirements as missing. **Evidence:** `OPS-002`, `TST-008` test harness fixtures.
 - [x] **S0-T03 — Prove ExifTool resolver on Linux.** *(2026-10-28, `feature/linux-mvp`: maintainer approved; tested with ExifTool 13.55 on Arch Linux, provisional minimum recorded in §3.2; recorded exception — CI run deferred by the maintainer.)* Write a standalone Rust adapter spike that resolves system `exiftool`, runs `-ver`, captures stdout/stderr/status and handles nonexistent executable and version mismatch. Document actual tested version/minimum compatibility in this file after evidence. **Acceptance:** 3 scenarios (installed/missing/invalid binary) have integration tests; no shell calls. **Evidence:** `FR-001`, `SEC-002`.
 - [x] **S0-T04 — Establish legal and fixture baseline.** *(2026-10-28, `feature/linux-mvp`: maintainer approved; fixtures regenerate byte-identically and real ExifTool 13.55 reads their expected values; Windows notice review stays open in `THIRD_PARTY_NOTICES` until S8-T05; recorded exception — CI run deferred by the maintainer.)* Add MIT `LICENSE`, accurate ExifTool attribution/third-party notice placeholder, synthetic/legal fixture generator and checksums; research source metadata licenses. **Acceptance:** no binary ExifTool/Perl in git; fixtures may be redistributed; documented Windows notice review is open until its stage; fixture generation is repeatable. **Evidence:** `OPS-003`, `PKG-004` early audit.
-- [ ] ⏳ IN PROGRESS (Claude, feature/linux-mvp) **S0-T05 — Add Linux CI quality gates.** GitHub Actions or equivalent for JS/Rust lint/format/build, real Linux ExifTool installed from package manager, unit/integration and coverage artifact, dependency audit and traceability check. **Acceptance:** Clean CI passes without local mutable dependencies; intentionally failing integration and safety test correctly blocks PR. **Evidence:** `OPS-001`, `TST-001`, `TST-002`.
-- [ ] **S0-T06 — Architectural decision spike.** Validate Tauri IPC command pattern and native-dialog selection, real path handling and installed ExifTool behavior on a test JPG and non-image fixture. Commit thin prototype or replace it with clean production adapter; do not retain two competing execution paths. **Acceptance:** Demonstrate `read one mixed-format file` through Rust and return structured error; record any discovery that changes this spec. **Evidence:** `FR-003`, `FR-005`, `NFR-005`.
+- [ ] ⛔ BLOCKED (first CI run deferred by the maintainer until the MVP draft PR) **S0-T05 — Add Linux CI quality gates.** GitHub Actions or equivalent for JS/Rust lint/format/build, real Linux ExifTool installed from package manager, unit/integration and coverage artifact, dependency audit and traceability check. **Acceptance:** Clean CI passes without local mutable dependencies; intentionally failing integration and safety test correctly blocks PR. **Evidence:** `OPS-001`, `TST-001`, `TST-002`.
+- [x] **S0-T06 — Architectural decision spike.** *(2026-10-28, `feature/linux-mvp`: maintainer confirmed in `npm run dev` that the Rust-opened native dialog reads a PNG and a real PDF and that cancelling returns to the empty state; integration tests cover JPEG/PDF/ZIP/text, per-file errors and hostile >1 KiB paths with ExifTool 13.55; findings recorded in §4.4 and DEC-015; recorded exception — CI run deferred by the maintainer.)* Validate Tauri IPC command pattern and native-dialog selection, real path handling and installed ExifTool behavior on a test JPG and non-image fixture. Commit thin prototype or replace it with clean production adapter; do not retain two competing execution paths. **Acceptance:** Demonstrate `read one mixed-format file` through Rust and return structured error; record any discovery that changes this spec. **Evidence:** `FR-003`, `FR-005`, `NFR-005`.
 
 **Gate `G0` — S0 accepted when:** All S0 tasks done; reproducible Linux startup; ExifTool system invocation proves reads on image and non-image fixtures; CI and traceability checks actually block failing changes; baseline tooling/fixture licenses reviewed. **No production feature claims yet.**
 
@@ -1176,6 +1183,7 @@ An AI agent may mark a stage complete only after **all** stage task criteria, te
 | DEC-012 | 2026-10-28 | Canonical SDD lives at `docs/SPEC.md` (S0-T02 and §4.2 originally named root `SPEC.md`) | Maintainer committed it under `docs/`; one canonical file is what matters, not its folder | Active |
 | DEC-013 | 2026-10-28 | Linux CI quality job runs in an `archlinux:base` container whose pacman mirror is pinned to one Arch Linux Archive date (`ARCH_SNAPSHOT` in `.github/workflows/ci.yml`); Rust toolchain pinned the same way (`RUST_TOOLCHAIN`) | Ubuntu runner packages are older than the tested ExifTool minimum (Ubuntu 24.04 ships 12.76), and S0-T05 requires ExifTool from a package manager; a dated snapshot makes every system package, including ExifTool and WebKitGTK, a fixed version, so CI has no mutable dependencies. Raise the snapshot date deliberately in a reviewed change | Superseded by DEC-014 |
 | DEC-014 | 2026-10-28 | Linux CI runs on the pinned `ubuntu-24.04` runner with apt system packages (Tauri v2 prerequisites), a pinned Rust toolchain and a Cargo cache; real-ExifTool integration tests run as a matrix of the Ubuntu 24.04 apt package (12.76) and the official release (13.55, fetched from SourceForge and checked against CPAN's SHA-256); the ExifTool minimum becomes 12.76 | Ubuntu is the standard, cheapest-to-provision base and matches the oldest-glibc rule for future Linux packages (S5-T05); testing the oldest distribution package plus the tested release turns the minimum into evidence instead of a guess; the Arch container (DEC-013) existed only to satisfy a 13.55 floor no stable Debian/Ubuntu release ships | Active |
+| DEC-015 | 2026-10-28 | Canonical read arguments are `-json -a -G1:4 -s -- <absolute path>`, run through the single bounded runner `adapter/exiftool/process.rs` that the `-ver` probe also uses | `-G1:4` keeps both the family-1 group and the copy number, so same-name tags in different groups and repeated instances stay distinct; `-G4` alone (previously in §4.3) drops the group name; one runner avoids two competing execution paths | Active |
 
 **To record a future decision:** add a row with a new `DEC-###` ID, date, adopted choice, tradeoff and supersession reference; edit relevant requirement, task and tests together. Do not erase a superseded decision or create a separate `.md` ADR file.
 
@@ -1207,4 +1215,4 @@ Use official upstream sources when implementing or updating behaviors. APIs and 
 
 **A successful SDD process is not the number of checked boxes.** It is an auditable invariant: requirements remain stable and intentional, tests assert user-visible behavior, CI verifies those tests, release gates reflect the platform actually exercised, and documentation stays small enough to remain accurate.
 
-**End of ExifBee SDD v1.0.5.**
+**End of ExifBee SDD v1.0.6.**

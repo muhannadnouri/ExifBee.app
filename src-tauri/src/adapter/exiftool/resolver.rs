@@ -1,17 +1,15 @@
 //! Finds and validates a system ExifTool executable (SPEC §3.2). The executable is always
 //! spawned directly with an argument vector, never through a shell (SEC-002).
 
+use super::process::{self, RunError};
 use std::fmt;
-use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// Oldest ExifTool version CI tests against: the Ubuntu 24.04 LTS package (SPEC §3.2, DEC-014).
 pub const MINIMUM_VERSION: (u32, u32) = (12, 76);
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
-const MAX_OUTPUT_BYTES: u64 = 64 * 1024;
+const MAX_OUTPUT_BYTES: usize = 64 * 1024;
 
 /// Package-managed locations probed before PATH, because desktop launchers often get a
 /// shorter PATH than login shells (e.g. Arch's /usr/bin/vendor_perl). Suggestions only.
@@ -156,50 +154,29 @@ fn default_candidates() -> Vec<PathBuf> {
 
 /// Runs `<path> -ver` without a shell and accepts only a bare `major.minor` version at or above the minimum.
 pub fn probe(path: &Path, timeout: Duration) -> Result<ExifTool, ResolveError> {
-    let mut child = Command::new(path)
-        .arg("-ver")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| ResolveError::Launch {
-            path: path.into(),
-            message: error.to_string(),
+    let output =
+        process::run(path, ["-ver"], timeout, MAX_OUTPUT_BYTES).map_err(|error| match error {
+            RunError::Launch(message) => ResolveError::Launch {
+                path: path.into(),
+                message,
+            },
+            RunError::Timeout(after) => ResolveError::Timeout {
+                path: path.into(),
+                after,
+            },
+            RunError::OutputTooLarge(_) => ResolveError::UnexpectedOutput {
+                path: path.into(),
+                stdout: error.to_string(),
+            },
         })?;
+    let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).trim().to_string();
+    let stdout = text(&output.stdout);
 
-    // shortcut: polling wait and post-exit pipe reads; output beyond the pipe buffer stalls the
-    // child until the timeout kills it. S2-T03 replaces this with the bounded streaming executor.
-    let started = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if started.elapsed() < timeout => thread::sleep(Duration::from_millis(10)),
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(ResolveError::Timeout {
-                    path: path.into(),
-                    after: timeout,
-                });
-            }
-            Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(ResolveError::Launch {
-                    path: path.into(),
-                    message: error.to_string(),
-                });
-            }
-        }
-    };
-    let stdout = read_bounded(child.stdout.take());
-    let stderr = read_bounded(child.stderr.take());
-
-    if !status.success() {
+    if !output.status.success() {
         return Err(ResolveError::Failed {
             path: path.into(),
-            code: status.code(),
-            stderr,
+            code: output.status.code(),
+            stderr: text(&output.stderr),
         });
     }
     let Some(version) = parse_version(&stdout) else {
@@ -218,14 +195,6 @@ pub fn probe(path: &Path, timeout: Duration) -> Result<ExifTool, ResolveError> {
         path: path.into(),
         version: stdout,
     })
-}
-
-fn read_bounded(pipe: Option<impl Read>) -> String {
-    let mut bytes = Vec::new();
-    if let Some(pipe) = pipe {
-        let _ = pipe.take(MAX_OUTPUT_BYTES).read_to_end(&mut bytes);
-    }
-    String::from_utf8_lossy(&bytes).trim().to_string()
 }
 
 /// ExifTool versions are `major.minor` with a two-digit minor, e.g. `13.55`.

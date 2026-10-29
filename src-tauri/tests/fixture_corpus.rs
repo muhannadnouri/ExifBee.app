@@ -1,7 +1,8 @@
 //! Baseline metadata of the generated fixture corpus (SPEC §6.2), read with the real system ExifTool.
 //! Regenerate fixtures with `npm run fixtures`; set `EXIFTOOL` to test a specific installation.
 
-use exifbee_lib::adapter::exiftool::resolver::{probe, resolve, DEFAULT_TIMEOUT};
+mod common;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -79,11 +80,7 @@ fn read_args(exiftool: &Path, file: &Path) -> Vec<String> {
 // @req OPS-003
 #[test]
 fn generated_fixtures_carry_their_known_metadata() {
-    let tool = match std::env::var_os("EXIFTOOL") {
-        Some(path) => probe(Path::new(&path), DEFAULT_TIMEOUT),
-        None => resolve(None),
-    }
-    .expect("a supported system ExifTool must be installed for this test");
+    let tool = common::system_exiftool();
 
     let listed: Vec<String> = fs::read_to_string(fixture_dir().join("SHA256SUMS"))
         .unwrap()

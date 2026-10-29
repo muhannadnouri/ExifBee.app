@@ -9,26 +9,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-/// Fresh empty directory under the system temp dir, removed on drop.
-struct TempDir(PathBuf);
-
-impl TempDir {
-    fn new(name: &str) -> Self {
-        let dir = std::env::temp_dir().join(format!(
-            "exifbee-{name}-{}-{:?}",
-            std::process::id(),
-            Instant::now()
-        ));
-        fs::create_dir_all(&dir).unwrap();
-        TempDir(dir)
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
-}
+mod common;
+use common::TempDir;
 
 /// Executable stand-in for a non-ExifTool or broken binary.
 /// A child process writes the executable: if a write fd were open here while another test thread
@@ -50,11 +32,7 @@ fn fake_executable(dir: &Path, name: &str, script: &str) -> PathBuf {
 // @req FR-001, SEC-002
 #[test]
 fn installed_exiftool_is_resolved_with_absolute_path_and_version() {
-    let tool = match std::env::var_os("EXIFTOOL") {
-        Some(path) => probe(Path::new(&path), DEFAULT_TIMEOUT),
-        None => resolve(None),
-    }
-    .expect("a supported system ExifTool must be installed for this test");
+    let tool = common::system_exiftool();
 
     assert!(tool.path.is_absolute(), "{:?}", tool.path);
     let (major, minor) = tool.version.split_once('.').expect("version like 13.55");

@@ -1,0 +1,120 @@
+//! Reads one file's metadata as structured JSON (S0-T06 spike; S2-T05 builds the full parser).
+
+use super::process::{self, RunError};
+use super::resolver::ExifTool;
+use serde::Serialize;
+use serde_json::{Map, Value};
+use std::ffi::OsStr;
+use std::fmt;
+use std::path::Path;
+use std::time::Duration;
+
+const READ_TIMEOUT: Duration = Duration::from_secs(60);
+const MAX_READ_OUTPUT: usize = 32 * 1024 * 1024;
+
+/// `-G1:4` keys every tag by group and copy number (`IFD0:Make`, `XMP-tiff:Copy1:Make`), so
+/// same-name tags stay distinct; `-G4` alone drops the group name (SPEC §4.3, DEC-015).
+const READ_ARGS: [&str; 4] = ["-json", "-a", "-G1:4", "-s"];
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileMetadata {
+    pub source_file: String,
+    /// ExifTool's per-file `Error`; the read still returns whatever ExifTool recognized.
+    pub error: Option<String>,
+    pub warnings: Vec<String>,
+    /// Group-qualified tags in ExifTool's output order.
+    pub tags: Map<String, Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReadError {
+    InvalidInput(String),
+    ProcessFailure(String),
+}
+
+impl fmt::Display for ReadError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidInput(message) | Self::ProcessFailure(message) => f.write_str(message),
+        }
+    }
+}
+
+impl std::error::Error for ReadError {}
+
+/// Reads one regular file. The path must be absolute, so it can never be taken for an option,
+/// and `--` ends option parsing anyway. A directory is rejected because ExifTool would read
+/// every file inside it.
+pub fn read_metadata(tool: &ExifTool, path: &Path) -> Result<FileMetadata, ReadError> {
+    if !path.is_absolute() {
+        return Err(ReadError::InvalidInput(format!(
+            "path must be absolute: {}",
+            path.display()
+        )));
+    }
+    if !path.is_file() {
+        return Err(ReadError::InvalidInput(format!(
+            "not a readable file: {}",
+            path.display()
+        )));
+    }
+
+    let args = READ_ARGS
+        .iter()
+        .map(OsStr::new)
+        .chain([OsStr::new("--"), path.as_os_str()]);
+    let output = process::run(&tool.path, args, READ_TIMEOUT, MAX_READ_OUTPUT)
+        .map_err(|error: RunError| ReadError::ProcessFailure(format!("ExifTool {error}")))?;
+
+    // ExifTool exits 1 when a file has an Error tag but still prints its JSON, so the output,
+    // not the exit status, decides; with no JSON at all, stderr explains the failure.
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if output.stdout.iter().all(u8::is_ascii_whitespace) {
+        return Err(ReadError::ProcessFailure(if stderr.is_empty() {
+            format!("ExifTool exited with {} and printed nothing", output.status)
+        } else {
+            stderr
+        }));
+    }
+    let mut files: Vec<Map<String, Value>> =
+        serde_json::from_slice(&output.stdout).map_err(|error| {
+            ReadError::ProcessFailure(format!("unexpected ExifTool output: {error}"))
+        })?;
+    if files.len() != 1 {
+        return Err(ReadError::ProcessFailure(format!(
+            "expected metadata for one file, got {}",
+            files.len()
+        )));
+    }
+    let mut tags = files.remove(0);
+    let source_file = match tags.shift_remove("SourceFile") {
+        Some(Value::String(source)) => source,
+        _ => {
+            return Err(ReadError::ProcessFailure(
+                "ExifTool output has no SourceFile".into(),
+            ))
+        }
+    };
+
+    let text = |value: &Value| {
+        value
+            .as_str()
+            .map_or_else(|| value.to_string(), String::from)
+    };
+    let mut error = None;
+    let mut warnings = Vec::new();
+    for (key, value) in &tags {
+        if key.starts_with("ExifTool:") && key.ends_with(":Error") {
+            error.get_or_insert_with(|| text(value));
+        } else if key.starts_with("ExifTool:") && key.ends_with(":Warning") {
+            warnings.push(text(value));
+        }
+    }
+    Ok(FileMetadata {
+        source_file,
+        error,
+        warnings,
+        tags,
+    })
+}

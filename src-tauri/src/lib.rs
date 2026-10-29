@@ -1,7 +1,11 @@
 pub mod adapter;
+pub mod commands;
+pub mod domain;
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .invoke_handler(tauri::generate_handler![commands::read_selected_file])
         .run(tauri::generate_context!())
         .expect("error while running ExifBee");
 }
