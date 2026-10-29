@@ -18,8 +18,8 @@ npm ci
 npm run dev
 ```
 
-Other scripts: `npm run build`, `npm test`, `npm run lint`, `npm run typecheck`, `npm run format`, `npm run format:check`.
+Other scripts: `npm run build`, `npm run fixtures` (regenerate `tests/fixtures`), `npm test`, `npm run lint`, `npm run typecheck`, `npm run format`, `npm run format:check`.
 
 ## License
 
-MIT for ExifBee source. ExifTool is separate software under its own license.
+MIT for ExifBee source ([LICENSE](LICENSE)). ExifTool is separate software under its own license; see [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES).

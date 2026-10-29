@@ -1,0 +1,15 @@
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about=""
+    xmlns:dc="http://purl.org/dc/elements/1.1/"
+    xmlns:tiff="http://ns.adobe.com/tiff/1.0/"
+    xmlns:Iptc4xmpCore="http://iptc.org/std/Iptc4xmpCore/1.0/xmlns/">
+   <dc:title><rdf:Alt><rdf:li xml:lang="x-default">مرحبا · 日本語 · 🐝</rdf:li></rdf:Alt></dc:title>
+   <dc:subject><rdf:Bag><rdf:li>bee</rdf:li><rdf:li>fixture</rdf:li></rdf:Bag></dc:subject>
+   <tiff:Make>ExifBee XMP Make</tiff:Make>
+   <Iptc4xmpCore:CreatorContactInfo rdf:parseType="Resource">
+    <Iptc4xmpCore:CiAdrCity>Fixture City</Iptc4xmpCore:CiAdrCity>
+   </Iptc4xmpCore:CreatorContactInfo>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>
