@@ -6,20 +6,60 @@ Status: early development, Linux first. The product and architecture specificati
 
 ## Development setup (Linux)
 
-| Tool             | Version                                                                                                                                        |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| Node.js          | 24.21.0 (pinned in `.node-version` and `package.json` `engines`)                                                                               |
-| npm              | 11.19.0 (ships with Node 24.21.0)                                                                                                              |
-| Rust             | 1.90 or newer (`rust-version` in `src-tauri/Cargo.toml`)                                                                                       |
-| System libraries | WebKitGTK 4.1 and GTK 3 development packages, as listed in the [Tauri v2 Linux prerequisites](https://v2.tauri.app/start/prerequisites/#linux) |
-| ExifTool         | 13.55 or newer from your package manager; integration tests use it (set `EXIFTOOL` to an absolute path to pick one)                            |
+| Tool             | Version                                                                                                      |
+| ---------------- | ------------------------------------------------------------------------------------------------------------ |
+| Node.js          | 24.21.0 (pinned in `.node-version` and `package.json` `engines`)                                             |
+| npm              | 11.19.0 (ships with Node 24.21.0)                                                                            |
+| Rust             | 1.90 or newer (`rust-version` in `src-tauri/Cargo.toml`), installed with rustup                              |
+| System libraries | WebKitGTK 4.1, GTK 3 and the [Tauri v2 Linux prerequisites](https://v2.tauri.app/start/prerequisites/#linux) |
+| ExifTool         | 13.55 or newer (provisional minimum, see below); integration tests use it                                    |
+
+### 1. System packages
+
+Debian / Ubuntu (apt):
+
+```bash
+sudo apt update
+sudo apt install build-essential curl file git libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev libimage-exiftool-perl
+```
+
+Arch / CachyOS / Manjaro (pacman; `paru -S` or `yay -S` take the same names):
+
+```bash
+sudo pacman -S --needed base-devel curl file git openssl webkit2gtk-4.1 librsvg xdotool appmenu-gtk-module rustup perl-image-exiftool
+```
+
+ExifBee has no tray icon, so Tauri's optional appindicator package is not needed. CI installs the Debian/Ubuntu list on Ubuntu 24.04; the Arch list is the equivalent set of Arch packages.
+
+### 2. Rust and Node.js
+
+- Rust: Arch installs `rustup` above, then run `rustup default stable`. On Debian/Ubuntu install rustup from <https://rustup.rs> (the apt `rustc` is too old).
+- Node.js 24.21.0: use a version manager that reads `.node-version`, such as [fnm](https://github.com/Schniz/fnm) (`fnm install` in the repo) or [mise](https://mise.jdx.dev/). Distribution `nodejs` packages are a different version on both families.
+
+### 3. ExifTool version
+
+ExifBee needs ExifTool 12.76 or newer, the Ubuntu 24.04 package; CI tests that package and the official 13.55 release. The apt and pacman packages above are new enough on Ubuntu 24.04+, Debian 13+ and Arch. Debian 12 ships 12.57, which ExifBee reports as unsupported; there, use an official release (exiftool.org hosts only the latest; SourceForge keeps every version). It needs only Perl:
+
+```bash
+curl -L -o Image-ExifTool-13.55.tar.gz https://sourceforge.net/projects/exiftool/files/Image-ExifTool-13.55.tar.gz/download
+tar -xzf Image-ExifTool-13.55.tar.gz
+export EXIFTOOL="$PWD/Image-ExifTool-13.55/exiftool"
+```
+
+`EXIFTOOL` (an absolute path) tells the tests which ExifTool to use; otherwise they find it the same way the app does.
+
+### 4. Build and run
 
 ```bash
 npm ci
-npm run dev
+npm run dev     # development window with hot reload
+npm run build   # release binary at src-tauri/target/release/exifbee
+npm test        # unit + real-ExifTool integration tests
 ```
 
-Other scripts: `npm run build`, `npm run fixtures` (regenerate `tests/fixtures`), `npm test` (`test:unit` + `test:integration`), `npm run coverage` (needs `cargo-llvm-cov`), `npm run audit:deps` (needs `cargo-audit`), `npm run lint`, `npm run typecheck`, `npm run format`, `npm run format:check`.
+Installers (AppImage, `.deb`, `.rpm`) are not produced yet; bundling is disabled until task S5-T05 in the spec.
+
+Other scripts: `npm run fixtures` (regenerate `tests/fixtures`), `npm run test:unit`, `npm run test:integration`, `npm run coverage` (needs `cargo-llvm-cov`), `npm run audit:deps` (needs `cargo-audit`), `npm run lint`, `npm run typecheck`, `npm run format`, `npm run format:check`.
 
 ## License
 

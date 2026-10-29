@@ -8,8 +8,8 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-/// Oldest ExifTool version ExifBee has been tested against (recorded in SPEC §3.2).
-pub const MINIMUM_VERSION: (u32, u32) = (13, 55);
+/// Oldest ExifTool version CI tests against: the Ubuntu 24.04 LTS package (SPEC §3.2, DEC-014).
+pub const MINIMUM_VERSION: (u32, u32) = (12, 76);
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_OUTPUT_BYTES: u64 = 64 * 1024;
 

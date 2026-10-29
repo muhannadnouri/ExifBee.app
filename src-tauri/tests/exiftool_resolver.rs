@@ -138,6 +138,15 @@ fn version_below_minimum_is_rejected() {
         Err(ResolveError::Unsupported { version, .. }) => assert_eq!(version, "9.99"),
         result => panic!("expected Unsupported, got {result:?}"),
     }
+
+    // Boundary: the Ubuntu 24.04 package (12.76) is the oldest accepted version.
+    let below = fake_executable(&dir.0, "below", "echo 12.75");
+    assert!(matches!(
+        probe(&below, DEFAULT_TIMEOUT),
+        Err(ResolveError::Unsupported { .. })
+    ));
+    let oldest = fake_executable(&dir.0, "oldest", "echo 12.76");
+    assert_eq!(probe(&oldest, DEFAULT_TIMEOUT).unwrap().version, "12.76");
 }
 
 // @req FR-001

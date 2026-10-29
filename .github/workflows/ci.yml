@@ -1,65 +1,143 @@
 name: ci
 
 on:
-  push:
   pull_request:
+  push:
+    branches: [main]
+  # Weekly run catches new advisories and upstream drift without a code change.
+  schedule:
+    - cron: '23 6 * * 1'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Actions are pinned to commit SHAs; update them, the runner image and these versions in reviewed changes.
+env:
+  RUST_TOOLCHAIN: 1.98.1
+  # Tauri v2 Linux build prerequisites (README); ExifBee has no tray, so no appindicator.
+  APT_PACKAGES: libwebkit2gtk-4.1-dev build-essential curl file libxdo-dev libssl-dev librsvg2-dev
+
 jobs:
-  # Actions are pinned to commit SHAs and the image to a digest; update them in reviewed changes.
-  # Arch Linux pinned to one Arch Linux Archive snapshot: every system package, including
-  # ExifTool from pacman, is a fixed version that meets the tested minimum (SPEC DEC-013).
-  quality:
-    runs-on: ubuntu-latest
-    container: archlinux:base@sha256:e82623936fa1a69700b48e98b058df6eaab18b737c27473a7234a40fdecb9413
-    env:
-      ARCH_SNAPSHOT: 2026/10/27
-      RUST_TOOLCHAIN: 1.98.1
-      EXIFTOOL: /usr/bin/vendor_perl/exiftool
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
-      - name: Install pinned system packages
-        run: |
-          echo "Server = https://archive.archlinux.org/repos/$ARCH_SNAPSHOT/\$repo/os/\$arch" > /etc/pacman.d/mirrorlist
-          pacman -Syyuu --noconfirm --needed git base-devel curl file openssl webkit2gtk-4.1 \
-            librsvg xdotool appmenu-gtk-module rustup perl-image-exiftool
-          "$EXIFTOOL" -ver
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # The container runs as root but the workspace is owned by the runner user; the legal audit runs git.
-      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends $APT_PACKAGES
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
           cache: npm
       - name: Install pinned Rust toolchain
         run: |
-          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal \
-            --component clippy,rustfmt,llvm-tools-preview
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy,rustfmt
           rustup default "$RUST_TOOLCHAIN"
-      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          tool: cargo-llvm-cov@0.9.1
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: checks-${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: checks-${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN }}-
       - run: npm ci
       - run: npm run test:traceability
       - run: npm run format:check
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run build
-      # Runs every Vitest and cargo test (unit and real-ExifTool integration) under coverage.
+      - run: npm run test:unit
+
+  # Real ExifTool tests against the oldest supported distribution package and the tested
+  # official release, so the minimum in SPEC §3.2 is backed by evidence (DEC-014).
+  integration:
+    needs: checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - exiftool: ubuntu-24.04 apt (12.76)
+            source: apt
+          - exiftool: official 13.55
+            source: official
+            version: '13.55'
+            sha256: 5f4c81d34ad406538c2871ad72dbfceb5d9b412b2f16cbbeb4d712d270846667
+    name: integration (${{ matrix.exiftool }})
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends $APT_PACKAGES
+      - name: Install ExifTool from apt
+        if: matrix.source == 'apt'
+        run: |
+          sudo apt-get install -y --no-install-recommends libimage-exiftool-perl
+          echo "EXIFTOOL=/usr/bin/exiftool" >> "$GITHUB_ENV"
+      # Checksum matches CPAN's published CHECKSUMS for this release; the build fails closed on mismatch.
+      - name: Install official ExifTool release
+        if: matrix.source == 'official'
+        env:
+          VERSION: ${{ matrix.version }}
+          SHA256: ${{ matrix.sha256 }}
+        run: |
+          curl -fsSL -o exiftool.tar.gz \
+            "https://sourceforge.net/projects/exiftool/files/Image-ExifTool-$VERSION.tar.gz/download"
+          echo "$SHA256  exiftool.tar.gz" | sha256sum -c -
+          tar -xzf exiftool.tar.gz -C "$RUNNER_TEMP"
+          echo "EXIFTOOL=$RUNNER_TEMP/Image-ExifTool-$VERSION/exiftool" >> "$GITHUB_ENV"
+      - run: '"$EXIFTOOL" -ver'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component llvm-tools-preview
+          rustup default "$RUST_TOOLCHAIN"
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
+        if: matrix.source == 'official'
+        with:
+          tool: cargo-llvm-cov@0.9.1
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: integration-${{ matrix.source }}-${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: integration-${{ matrix.source }}-${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN }}-
+      - run: npm ci
+      - run: npm run test:integration
+        if: matrix.source == 'apt'
+      # Coverage runs every Vitest and cargo test, so it also serves as this leg's test run.
       - run: npm run coverage
+        if: matrix.source == 'official'
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: always()
+        if: always() && matrix.source == 'official'
         with:
           name: coverage
           path: coverage/
           if-no-files-found: error
 
-  # Advisory databases change daily, so this job reports new advisories without a code change.
+  # Advisory databases change daily; the weekly schedule reruns this without a code change.
   dependency-audit:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
