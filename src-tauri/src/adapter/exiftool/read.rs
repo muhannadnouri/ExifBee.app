@@ -1,10 +1,10 @@
 //! Reads one file's metadata as structured JSON (S0-T06 spike; S2-T05 builds the full parser).
 
+use super::argv::{Args, ArgsError};
 use super::process::{self, RunError};
 use super::resolver::ExifTool;
 use serde::Serialize;
 use serde_json::{Map, Value};
-use std::ffi::OsStr;
 use std::fmt;
 use std::path::Path;
 use std::time::Duration;
@@ -14,7 +14,7 @@ const MAX_READ_OUTPUT: usize = 32 * 1024 * 1024;
 
 /// `-G1:4` keys every tag by group and copy number (`IFD0:Make`, `XMP-tiff:Copy1:Make`), so
 /// same-name tags stay distinct; `-G4` alone drops the group name (SPEC §4.3, DEC-015).
-const READ_ARGS: [&str; 4] = ["-json", "-a", "-G1:4", "-s"];
+pub const READ_OPTIONS: &[&str] = &["-json", "-a", "-G1:4", "-s"];
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -43,6 +43,11 @@ impl fmt::Display for ReadError {
 }
 
 impl std::error::Error for ReadError {}
+
+/// The exact arguments a single-file read runs (also what a "copy command" view should show).
+pub fn read_args(path: &Path) -> Result<Args, ArgsError> {
+    Args::new().options(READ_OPTIONS).files([path])
+}
 
 /// Reads one file's metadata with `-json -a -G1:4 -s -- <path>` (DEC-015).
 ///
@@ -74,11 +79,8 @@ pub fn read_metadata(tool: &ExifTool, path: &Path) -> Result<FileMetadata, ReadE
         )));
     }
 
-    let args = READ_ARGS
-        .iter()
-        .map(OsStr::new)
-        .chain([OsStr::new("--"), path.as_os_str()]);
-    let output = process::run(&tool.path, args, READ_TIMEOUT, MAX_READ_OUTPUT)
+    let args = read_args(path).map_err(|error| ReadError::InvalidInput(error.to_string()))?;
+    let output = process::run(&tool.path, args.as_slice(), READ_TIMEOUT, MAX_READ_OUTPUT)
         .map_err(|error: RunError| ReadError::ProcessFailure(format!("ExifTool {error}")))?;
 
     // ExifTool exits 1 when a file has an Error tag but still prints its JSON, so the output,

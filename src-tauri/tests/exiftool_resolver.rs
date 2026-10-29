@@ -5,29 +5,11 @@ use exifbee_lib::adapter::exiftool::resolver::{
     probe, resolve, resolve_from, ResolveError, DEFAULT_TIMEOUT,
 };
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 mod common;
-use common::TempDir;
-
-/// Executable stand-in for a non-ExifTool or broken binary.
-/// A child process writes the executable: if a write fd were open here while another test thread
-/// forks, that child would inherit it and exec of the script would fail with ETXTBSY.
-fn fake_executable(dir: &Path, name: &str, script: &str) -> PathBuf {
-    let source = dir.join(format!("{name}.src"));
-    let path = dir.join(name);
-    fs::write(&source, format!("#!/bin/sh\n{script}\n")).unwrap();
-    let status = Command::new("install")
-        .args(["-m", "755"])
-        .arg(&source)
-        .arg(&path)
-        .status()
-        .unwrap();
-    assert!(status.success());
-    path
-}
+use common::{fake_executable, TempDir};
 
 // @req FR-001, SEC-002
 #[test]

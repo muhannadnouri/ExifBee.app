@@ -2,6 +2,7 @@
 //! knowledge in `crate::platform`; this module only runs and judges candidates. The executable is
 //! always spawned directly with an argument vector, never through a shell (SEC-002).
 
+use super::argv::Args;
 use super::process::{self, RunError};
 use crate::platform;
 use std::collections::HashSet;
@@ -208,21 +209,26 @@ pub fn resolve_from(
 ///   that is rejected as `UnexpectedOutput` because the installation is broken.
 /// - A non-executable file fails as `Launch`, a hang as `Timeout` (the child is killed).
 pub fn probe(path: &Path, timeout: Duration) -> Result<ExifTool, ResolveError> {
-    let output =
-        process::run(path, ["-ver"], timeout, MAX_OUTPUT_BYTES).map_err(|error| match error {
-            RunError::Launch(message) => ResolveError::Launch {
-                path: path.into(),
-                message,
-            },
-            RunError::Timeout(after) => ResolveError::Timeout {
-                path: path.into(),
-                after,
-            },
-            RunError::OutputTooLarge(_) => ResolveError::UnexpectedOutput {
-                path: path.into(),
-                stdout: error.to_string(),
-            },
-        })?;
+    let output = process::run(
+        path,
+        Args::new().options(&["-ver"]).as_slice(),
+        timeout,
+        MAX_OUTPUT_BYTES,
+    )
+    .map_err(|error| match error {
+        RunError::Launch(message) => ResolveError::Launch {
+            path: path.into(),
+            message,
+        },
+        RunError::Timeout(after) => ResolveError::Timeout {
+            path: path.into(),
+            after,
+        },
+        RunError::OutputTooLarge(_) => ResolveError::UnexpectedOutput {
+            path: path.into(),
+            stdout: error.to_string(),
+        },
+    })?;
     let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).trim().to_string();
     let stdout = text(&output.stdout);
 
