@@ -19,7 +19,8 @@ export function Drawer({ id, title, open, onToggle, children }: Props) {
         </button>
       </h2>
       {open && (
-        <div className="drawer-body" id={id}>
+        // Tab stop so keyboard users can scroll long drawer content.
+        <div className="drawer-body" id={id} tabIndex={0}>
           {children}
         </div>
       )}

@@ -67,6 +67,16 @@ describe('application shell', () => {
 
     await user.click(screen.getByRole('button', { name: /Log/ }));
     expect(screen.getByRole('log').textContent).toContain('error: /docs/b.pdf: File format error');
+    // Newest event first.
+    expect(
+      within(screen.getByRole('log'))
+        .getAllByRole('listitem')
+        .map((item) => item.textContent),
+    ).toEqual([
+      'info: Read /photos/a.jpg',
+      'error: /docs/b.pdf: File format error',
+      'info: Read /photos/a.jpg',
+    ]);
   });
 
   it('reports a failed read instead of failing silently, and a cancelled dialog changes nothing', async () => {
@@ -154,26 +164,5 @@ describe('keyboard navigation and focus', () => {
     await user.click(first);
     expect(document.activeElement).toBe(first);
     expect(first.getAttribute('aria-current')).toBe('true');
-  });
-
-  it('cycles F6 / Shift+F6 through toolbar, files, metadata and drawers', async () => {
-    const user = userEvent.setup();
-    render(<App />);
-    const addFiles = screen.getByRole('button', { name: 'Add files…' });
-    const filesPane = screen.getByRole('region', { name: 'Files' });
-    const metadataPane = screen.getByRole('region', { name: 'Metadata' });
-    const actionsToggle = screen.getByRole('button', { name: /Actions/ });
-
-    addFiles.focus();
-    await user.keyboard('{F6}');
-    expect(document.activeElement).toBe(filesPane);
-    await user.keyboard('{F6}');
-    expect(document.activeElement).toBe(metadataPane);
-    await user.keyboard('{F6}');
-    expect(document.activeElement).toBe(actionsToggle);
-    await user.keyboard('{F6}');
-    expect(document.activeElement).toBe(addFiles);
-    await user.keyboard('{Shift>}{F6}{/Shift}');
-    expect(document.activeElement).toBe(actionsToggle);
   });
 });

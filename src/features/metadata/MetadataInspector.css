@@ -31,7 +31,8 @@
   overflow-wrap: anywhere;
 }
 
-.tags td:first-child {
+.tags th[scope='row'] {
+  font-weight: normal;
   white-space: nowrap;
   color: var(--text-muted);
 }

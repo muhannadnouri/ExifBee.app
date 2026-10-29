@@ -5,6 +5,7 @@ import { Drawer } from '../components/Drawer';
 import { Splitter } from '../components/Splitter';
 import { FilePane } from '../features/files/FilePane';
 import { MetadataInspector } from '../features/metadata/MetadataInspector';
+import { ShortcutsDialog } from '../features/help/ShortcutsDialog';
 import { ThemeSwitcher } from '../features/settings/ThemeSwitcher';
 import { isAppError, readSelectedFile } from '../lib/ipc';
 import type { AppError, FileMetadata } from '../lib/ipc';
@@ -59,7 +60,8 @@ export function App() {
   const [reading, setReading] = useState(false);
   const [log, setLog] = useState<LogEntry[]>([]);
   const [layout, setLayout] = useState(loadLayout);
-  const shell = useRef<HTMLDivElement>(null);
+  const [status, setStatus] = useState('');
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const nextLogId = useRef(1);
 
   useEffect(() => {
@@ -77,40 +79,42 @@ export function App() {
   const addFiles = async () => {
     if (reading) return;
     setReading(true);
+    setStatus('Reading…');
     try {
       const file = await readSelectedFile();
-      if (!file) return;
+      if (!file) {
+        setStatus('');
+        return;
+      }
       setFiles((current) => [
         ...current.filter((existing) => existing.sourceFile !== file.sourceFile),
         file,
       ]);
       setSelected(file.sourceFile);
       setFailure(null);
+      // Announced politely by the status live region; errors also use role="alert".
+      const name = file.sourceFile.split('/').pop() ?? file.sourceFile;
+      setStatus(file.error ? `Could not fully read ${name}` : `Read ${name}`);
       if (file.error) addLog('error', `${file.sourceFile}: ${file.error}`);
       else addLog('info', `Read ${file.sourceFile}`);
       for (const warning of file.warnings) addLog('warning', `${file.sourceFile}: ${warning}`);
     } catch (error) {
       const appError = isAppError(error) ? error : { kind: 'Internal', message: String(error) };
       setFailure(appError);
+      setStatus('Read failed');
       addLog('error', `${appError.kind}: ${appError.message}`);
     } finally {
       setReading(false);
     }
   };
 
-  // Ctrl+O adds files; F6 / Shift+F6 cycle focus through the toolbar, panes and open drawers.
+  // Global shortcuts are listed in app/shortcuts.ts; a modal dialog suspends them.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (shortcutsOpen) return;
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'o') {
         event.preventDefault();
         void addFiles();
-      } else if (event.key === 'F6' && shell.current) {
-        event.preventDefault();
-        const regions = [...shell.current.querySelectorAll<HTMLElement>('[data-region]')];
-        const current = regions.findIndex((region) => region.contains(document.activeElement));
-        const step = event.shiftKey ? -1 : 1;
-        const next = regions[(current + step + regions.length) % regions.length];
-        (next?.querySelector<HTMLElement>('button') ?? next)?.focus();
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -125,8 +129,8 @@ export function App() {
   } as CSSProperties;
 
   return (
-    <div className="shell" ref={shell} style={style}>
-      <header className="toolbar" data-region>
+    <div className="shell" style={style}>
+      <header className="toolbar">
         <h1 className="app-name">ExifBee</h1>
         <div role="toolbar" aria-label="Main toolbar" className="toolbar-actions">
           <Button
@@ -137,23 +141,20 @@ export function App() {
           >
             Add files…
           </Button>
+          <Button onClick={() => setShortcutsOpen(true)} title="Keyboard shortcuts">
+            Shortcuts
+          </Button>
         </div>
         <div className="toolbar-end">
           <span className="status" role="status">
-            {reading ? 'Reading…' : ''}
+            {status}
           </span>
           <ThemeSwitcher />
         </div>
       </header>
 
       <div className="workspace">
-        <section
-          className="pane files-pane"
-          id="files-pane"
-          aria-labelledby="files-title"
-          tabIndex={-1}
-          data-region
-        >
+        <section className="pane files-pane" id="files-pane" aria-labelledby="files-title">
           <h2 id="files-title">Files</h2>
           <FilePane files={files} selected={selected} onSelect={setSelected} />
         </section>
@@ -168,15 +169,15 @@ export function App() {
         <section
           className="pane metadata-pane"
           aria-labelledby="metadata-title"
-          tabIndex={-1}
-          data-region
+          // Tab stop so keyboard users can scroll a long tag table, which has no focusable cells.
+          tabIndex={0}
         >
           <h2 id="metadata-title">Metadata</h2>
           <MetadataInspector file={file} failure={failure} reading={reading} />
         </section>
       </div>
 
-      <div className={`drawers${drawerOpen ? ' drawers-open' : ''}`} id="drawers" data-region>
+      <div className={`drawers${drawerOpen ? ' drawers-open' : ''}`} id="drawers">
         {drawerOpen && (
           <Splitter
             label="Resize drawers"
@@ -204,16 +205,20 @@ export function App() {
           {log.length === 0 ? (
             <p className="muted">No activity yet.</p>
           ) : (
-            <ol className="log" role="log" aria-label="Session log">
-              {log.map((entry) => (
-                <li key={entry.id} className={`log-${entry.level}`}>
-                  {entry.level}: {entry.message}
-                </li>
-              ))}
-            </ol>
+            <div role="log" aria-label="Session log">
+              {/* Newest first; `reversed` keeps each entry's number as its event order. */}
+              <ol className="log" reversed>
+                {[...log].reverse().map((entry) => (
+                  <li key={entry.id} className={`log-${entry.level}`}>
+                    {entry.level}: {entry.message}
+                  </li>
+                ))}
+              </ol>
+            </div>
           )}
         </Drawer>
       </div>
+      <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
     </div>
   );
 }

@@ -1,0 +1,19 @@
+.shortcuts {
+  border-collapse: collapse;
+}
+
+.shortcuts th,
+.shortcuts td {
+  padding: 0.25rem 0.75rem 0.25rem 0;
+  text-align: start;
+  vertical-align: top;
+}
+
+.shortcuts th[scope='row'] {
+  font-weight: normal;
+  white-space: nowrap;
+}
+
+.shortcuts kbd {
+  font-family: var(--font-mono);
+}

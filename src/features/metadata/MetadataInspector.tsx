@@ -46,7 +46,7 @@ export function MetadataInspector({ file, failure, reading }: Props) {
         <tbody>
           {Object.entries(file.tags).map(([key, value]) => (
             <tr key={key}>
-              <td>{key}</td>
+              <th scope="row">{key}</th>
               <td>{display(value)}</td>
             </tr>
           ))}
