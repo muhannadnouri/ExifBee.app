@@ -1,8 +1,12 @@
-//! Finds and validates a system ExifTool executable (SPEC §3.2). The executable is always
-//! spawned directly with an argument vector, never through a shell (SEC-002).
+//! Validates and selects a system ExifTool executable (SPEC §3.2). *Where* to look is OS
+//! knowledge in `crate::platform`; this module only runs and judges candidates. The executable is
+//! always spawned directly with an argument vector, never through a shell (SEC-002).
 
 use super::process::{self, RunError};
+use crate::platform;
+use std::collections::HashSet;
 use std::fmt;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -11,21 +15,47 @@ pub const MINIMUM_VERSION: (u32, u32) = (12, 76);
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_OUTPUT_BYTES: usize = 64 * 1024;
 
-/// Package-managed locations probed before PATH, because desktop launchers often get a
-/// shorter PATH than login shells (e.g. Arch's /usr/bin/vendor_perl). Suggestions only.
-#[cfg(target_os = "linux")]
-const KNOWN_LOCATIONS: &[&str] = &[
-    "/usr/bin/exiftool",
-    "/usr/local/bin/exiftool",
-    "/usr/bin/vendor_perl/exiftool",
-];
-#[cfg(not(target_os = "linux"))]
-const KNOWN_LOCATIONS: &[&str] = &[];
-
+/// A validated ExifTool: the path it was found or chosen at, its `-ver`, and which file that
+/// path really is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExifTool {
+    /// As found or chosen (may be a symlink, e.g. `/usr/bin/exiftool`); what reads execute.
     pub path: PathBuf,
     pub version: String,
+    pub identity: ExecutableIdentity,
+}
+
+/// Which file an executable path really is (S2-T01). Two paths are the same executable when their
+/// identities are equal, e.g. a distribution symlink and its target. Later stages key the
+/// capability snapshot on version + identity (SPEC §3.2 item 7), so an in-place upgrade or a
+/// different install is never mistaken for the one already inspected.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ExecutableIdentity {
+    /// Absolute path with every symlink resolved.
+    pub canonical_path: PathBuf,
+    /// `(device, inode)` on Unix, so hard links also count as the same file.
+    pub file_id: Option<(u64, u64)>,
+}
+
+impl ExecutableIdentity {
+    /// Reads the identity of an existing file; `None` if it cannot be resolved (missing, a broken
+    /// symlink, or no permission to read its directory).
+    pub fn of(path: &Path) -> Option<Self> {
+        let canonical_path = fs::canonicalize(path).ok()?;
+        #[cfg(unix)]
+        let file_id = {
+            use std::os::unix::fs::MetadataExt;
+            fs::metadata(&canonical_path)
+                .ok()
+                .map(|meta| (meta.dev(), meta.ino()))
+        };
+        #[cfg(not(unix))]
+        let file_id = None;
+        Some(Self {
+            canonical_path,
+            file_id,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,7 +134,7 @@ impl std::error::Error for ResolveError {}
 
 /// Finds the ExifTool to use: the user's override if set, else auto-detection (SPEC §3.2).
 ///
-/// Thin wrapper over [`resolve_from`] with the real candidate list from `default_candidates`
+/// Thin wrapper over [`resolve_from`] with the real candidate list from `platform::exiftool_candidates`
 /// (known package locations first, then absolute `PATH` entries). Called by
 /// `service::dependency::check`, which every command goes through, so reads and the Settings
 /// status card always agree on which executable is in use.
@@ -112,7 +142,10 @@ impl std::error::Error for ResolveError {}
 /// Gotcha: this spawns `-ver` for each existing candidate until one validates, so it blocks for
 /// tens of milliseconds; call it off the async runtime (see `commands::blocking`).
 pub fn resolve(user_override: Option<&Path>) -> Result<ExifTool, ResolveError> {
-    resolve_from(user_override, default_candidates())
+    resolve_from(
+        user_override,
+        platform::exiftool_candidates(std::env::var_os("PATH").as_deref()),
+    )
 }
 
 /// Resolution with an injectable candidate list (tests pass fake executables).
@@ -121,8 +154,8 @@ pub fn resolve(user_override: Option<&Path>) -> Result<ExifTool, ResolveError> {
 /// 1. Override given → it is the *only* option: relative → `NotAbsolute`, missing → `NotFound`,
 ///    otherwise [`probe`]. A broken override is reported, never silently replaced by an
 ///    auto-detected ExifTool, because the user chose it deliberately (SPEC §3.2).
-/// 2. No override → try candidates in order; skip ones that do not exist; first that passes
-///    [`probe`] wins.
+/// 2. No override → try candidates in order; skip ones that do not exist or are the same file
+///    (same [`ExecutableIdentity`]) as one already tried; first that passes [`probe`] wins.
 /// 3. Nothing passed → the last probe error if any candidate existed (e.g. "too old"), which is
 ///    more useful than `NotFound`; otherwise `NotFound` with the searched paths.
 ///
@@ -145,7 +178,15 @@ pub fn resolve_from(
     }
 
     let mut last_error = None;
+    // The same executable is often reachable twice (a symlink and its target, or a PATH entry
+    // that repeats a known location); probe each real file once.
+    let mut seen = HashSet::new();
     for path in candidates.iter().filter(|path| path.is_file()) {
+        if let Some(identity) = ExecutableIdentity::of(path) {
+            if !seen.insert(identity) {
+                continue;
+            }
+        }
         match probe(path, DEFAULT_TIMEOUT) {
             Ok(tool) => return Ok(tool),
             Err(error) => last_error = Some(error),
@@ -154,27 +195,6 @@ pub fn resolve_from(
     Err(last_error.unwrap_or(ResolveError::NotFound {
         searched: candidates,
     }))
-}
-
-/// Auto-detection order: [`KNOWN_LOCATIONS`] first, then `<dir>/exiftool` for each absolute
-/// `PATH` entry, without duplicates.
-///
-/// Why known locations first: apps started from a desktop launcher often get a shorter `PATH`
-/// than a terminal (Arch's `/usr/bin/vendor_perl` is a real example). Relative `PATH` entries
-/// such as `.` are dropped because they depend on the working directory (SEC-002).
-fn default_candidates() -> Vec<PathBuf> {
-    let path_dirs = std::env::var_os("PATH")
-        .map(|value| std::env::split_paths(&value).collect::<Vec<_>>())
-        .unwrap_or_default();
-    let mut candidates: Vec<PathBuf> = KNOWN_LOCATIONS.iter().map(PathBuf::from).collect();
-    // Relative PATH entries (e.g. ".") depend on the working directory and are not trusted.
-    for dir in path_dirs.into_iter().filter(|dir| dir.is_absolute()) {
-        let candidate = dir.join("exiftool");
-        if !candidates.contains(&candidate) {
-            candidates.push(candidate);
-        }
-    }
-    candidates
 }
 
 /// Validates one executable by running `<path> -ver` (argv, no shell) through the shared runner.
@@ -225,9 +245,16 @@ pub fn probe(path: &Path, timeout: Duration) -> Result<ExifTool, ResolveError> {
             version: stdout,
         });
     }
+    // A file that just ran successfully has an identity unless it vanished in between; fall back
+    // to the path itself rather than failing a working ExifTool.
+    let identity = ExecutableIdentity::of(path).unwrap_or_else(|| ExecutableIdentity {
+        canonical_path: path.into(),
+        file_id: None,
+    });
     Ok(ExifTool {
         path: path.into(),
         version: stdout,
+        identity,
     })
 }
 

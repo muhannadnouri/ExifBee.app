@@ -169,3 +169,30 @@ fn search_skips_invalid_candidates_and_override_wins() {
     let found = resolve_from(Some(&other), vec![good]).unwrap();
     assert_eq!(found.version, "13.60");
 }
+
+// @req FR-001
+#[test]
+fn the_same_executable_reached_twice_is_probed_once_and_identified() {
+    let dir = TempDir::new("identity");
+    let log = dir.0.join("runs.log");
+    let real = fake_executable(
+        &dir.0,
+        "exiftool-real",
+        &format!("echo run >> '{}'; echo 13.55", log.display()),
+    );
+    let link = dir.0.join("exiftool");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+
+    // A failing candidate first, then the symlink and its target: the target is not re-probed.
+    let bad = fake_executable(&dir.0, "broken", "exit 7");
+    let found = resolve_from(None, vec![bad, link.clone(), real.clone()]).unwrap();
+    assert_eq!(found.path, link);
+    assert_eq!(found.identity.canonical_path, real.canonicalize().unwrap());
+    assert_eq!(fs::read_to_string(&log).unwrap().lines().count(), 1);
+
+    // Identity is the real file: the symlink and its target compare equal.
+    assert_eq!(
+        probe(&real, DEFAULT_TIMEOUT).unwrap().identity,
+        found.identity
+    );
+}

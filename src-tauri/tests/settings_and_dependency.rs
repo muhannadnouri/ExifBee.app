@@ -131,3 +131,27 @@ fn a_broken_override_is_reported_not_replaced() {
     let (relative, _) = check(Some(std::path::Path::new("exiftool")));
     assert_eq!(relative.error.unwrap().kind, ErrorKind::InvalidInput);
 }
+
+// @req FR-001, FR-002, UX-005
+#[test]
+fn a_stale_override_is_reported_missing_not_replaced() {
+    let dir = TempDir::new("override-stale");
+    let tool = system_exiftool();
+    // A working override, e.g. chosen in Settings, whose file is later removed (uninstall, moved
+    // install, deleted copy).
+    let chosen = dir.0.join("exiftool");
+    std::os::unix::fs::symlink(&tool.path, &chosen).unwrap();
+    let (before, _) = check(Some(&chosen));
+    assert_eq!(before.error, None);
+    assert_eq!(
+        before.resolved_path.as_deref(),
+        tool.identity.canonical_path.to_str()
+    );
+
+    fs::remove_file(&chosen).unwrap();
+    let (after, resolved) = check(Some(&chosen));
+    assert!(resolved.is_none(), "must not fall back to auto-detection");
+    assert!(after.is_override);
+    assert_eq!(after.path.as_deref(), chosen.to_str());
+    assert_eq!(after.error.unwrap().kind, ErrorKind::DependencyMissing);
+}

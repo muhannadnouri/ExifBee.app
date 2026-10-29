@@ -1,6 +1,6 @@
 ---
 title: ExifBee — Software Design & Delivery Specification
-spec_version: 1.0.13
+spec_version: 1.0.14
 status: approved-baseline-for-implementation
 created: 2026-10-28
 product: ExifBee
@@ -89,7 +89,7 @@ For every task:
 
 ### 0.5 Versioning and change control
 
-- This is **SDD v1.0.13** (v1.0.0 was the initial implementation baseline). Product release versioning is independent (start application releases at `0.x`).
+- This is **SDD v1.0.14** (v1.0.0 was the initial implementation baseline). Product release versioning is independent (start application releases at `0.x`).
 - Spec `PATCH`: clarifications or test links without behavior change. `MINOR`: additive requirements/tasks. `MAJOR`: materially changed behavior, security guarantees, scope, or compatibility.
 - Record important decisions in the **Decision log (§18)** with date, ID, rationale, tradeoff, and replacement when superseded; don't introduce separate ADR Markdown files.
 - CI validates frontmatter, unique IDs, valid status syntax, task/gate references, and test references. A machine report is generated on demand rather than maintained manually.
@@ -259,6 +259,7 @@ For every task:
    - **Revised by S0-T05 (DEC-014): minimum = ExifTool 12.76**, the Ubuntu 24.04 LTS package, so users of the oldest supported LTS can use their distribution ExifTool. Evidence: the CI `integration` matrix runs every real-ExifTool test against Ubuntu 24.04 apt 12.76 and the official 13.55 release; S0-T05 cannot be checked until both legs pass. Never lower the minimum below a version that CI tests, and raise it (with a recorded reason) when a feature needs newer ExifTool behavior.
    - `-ver` output is accepted only as a bare `major.minor` version (two-digit minor). Anything else, including ExifTool's own `[Warning: Library version is …]` script/library mismatch suffix, is rejected as a broken installation and its output is shown.
    - A user override is used exclusively: if it fails validation the error is reported, never silently replaced by an auto-detected executable. Relative overrides and relative PATH entries are rejected.
+   - **Recorded by S2-T01 (2026-10-29):** discovery lives in `src-tauri/src/platform/` (one module per OS exposing `EXIFTOOL_FILE_NAME` and `KNOWN_EXIFTOOL_LOCATIONS`; Linux implemented, macOS/Windows search `PATH` only until S7/S8) and validation in `adapter/exiftool/resolver.rs`. Linux known locations: `/usr/bin` (Debian/Ubuntu/Fedora/openSUSE), `/usr/local/bin`, `/usr/bin/vendor_perl` and `/usr/bin/site_perl` (Arch family), `/home/linuxbrew/.linuxbrew/bin`, `/run/current-system/sw/bin` (NixOS); then absolute `PATH` entries. Each validated executable carries an `ExecutableIdentity` (canonical path + Unix device/inode): candidates that are the same file (symlink and target, repeated PATH entry) are probed once, and the status card shows "Resolves to" for a symlinked path. The identity is the key for the S2-T04 capability snapshot.
    - **Recorded by S1-T04 (2026-10-29):** the override is chosen only through a native file dialog opened by Rust (`choose_exiftool_override`); there is no text input or command that accepts a path string, because the renderer must never name an executable for Rust to run (SEC-008). A chosen file is saved only if it passes `-ver` validation; otherwise the previous setting stays and the reason is shown. Settings live in `<OS app-config dir>/settings.json` (`{"version": 1, "exiftoolOverride": …}`), written atomically (temp file + fsync + rename). Any unusable file (invalid JSON, unknown fields, wrong types, unknown or newer version) is renamed to `settings.json.unreadable-<unix-seconds>`, defaults are used, and the warning is shown as a startup banner and logged. Theme stays in WebView storage (S1-T02). The Settings dialog shows the ExifTool status card (path, version, source, or the error with Linux install commands), Retry, Choose executable…, Use automatic detection, and About (version, MIT, ExifTool attribution).
 
 ### 3.3 How other tools integrate ExifTool
@@ -673,7 +674,7 @@ Record hardware/OS, ExifTool version, cold/warm cache, file sizes, throughput, p
 
 **Goal:** A reliable cross-platform-in-design Rust ExifTool execution engine on Linux, with real metadata discovery.
 
-- [ ] **S2-T01 — Finalize executable resolver.** Separate `platform/` discovery and `adapter/` process invocation; validate output of `-ver`, per-executable identity and configurable override. Include Linux package-managed paths; leave macOS/Windows implementations behind typed platform interfaces until stages S7/S8. **Acceptance:** Installed, stale path, invalid executable, nonzero exit and timeout tested; selected path/version displayed; no process spawned through shell. **Evidence:** `FR-001`, `FR-002`, `SEC-002`.
+- [x] **S2-T01 — Finalize executable resolver.** *(2026-10-29, `feature/linux-mvp`: maintainer approved. Discovery split into `platform/` (Linux implemented; macOS/Windows PATH-only stubs until S7/S8) from validation in `adapter/`; `ExecutableIdentity` (canonical path + device/inode) dedupes candidates and shows "Resolves to". Tier 2–3 tests: installed ExifTool, stale override (removed after working) reported not replaced, invalid executable, non-zero exit, timeout, shell metacharacters literal, discovery order, probe-once for symlinked duplicates; status card path/version. Open: CI run deferred by the maintainer.)* Separate `platform/` discovery and `adapter/` process invocation; validate output of `-ver`, per-executable identity and configurable override. Include Linux package-managed paths; leave macOS/Windows implementations behind typed platform interfaces until stages S7/S8. **Acceptance:** Installed, stale path, invalid executable, nonzero exit and timeout tested; selected path/version displayed; no process spawned through shell. **Evidence:** `FR-001`, `FR-002`, `SEC-002`.
 - [ ] **S2-T02 — Implement argv builder and safe display formatter.** Build `Vec<OsString>`/equivalent, no string concatenation into a shell; separately format copies for POSIX and Windows user terminals with clear warning for shell-dependent quoting. **Acceptance:** Spaces, single/double quotes, Unicode, newline (where legal), leading-hyphen names, colon, `;`, `&`, `$`, backslashes do not produce unintended operations; displayed command is faithful to executed argv with platform-specific representation. **Evidence:** `FR-015`, `SEC-002`, `NFR-005`, `TST-007`.
 - [ ] **S2-T03 — Build isolated executor.** Spawn child, enforce resource/time/output bounds, gather stdout and stderr independently, expose exit status and cancellation token, clean up on abrupt error. **Acceptance:** Slow/hung, oversized output, nonzero exit, missing dependency, user cancellation, and child termination tested without zombie processes; no unhandled UI rejection. **Evidence:** `SEC-007`, `FR-017`, `FR-018`.
 - [ ] **S2-T04 — Capability enumeration.** Use installed ExifTool to obtain `-listf`, `-listr`, `-listwf`, `-listw`, group info and selective `-listx`; normalize/version-key cache and paginate large tag listings. **Acceptance:** File formats are never limited by a hardcoded photo extension list; cache invalidates when executable changes; known read-only/writable distinctions survive serialization. **Evidence:** `FR-007`, `UX-006`.
@@ -1247,4 +1248,4 @@ Use official upstream sources when implementing or updating behaviors. APIs and 
 
 **A successful SDD process is not the number of checked boxes.** It is an auditable invariant: requirements remain stable and intentional, tests assert user-visible behavior, CI verifies those tests, release gates reflect the platform actually exercised, and documentation stays small enough to remain accurate.
 
-**End of ExifBee SDD v1.0.13.**
+**End of ExifBee SDD v1.0.14.**

@@ -13,6 +13,9 @@ pub struct ExifToolStatus {
     /// `true` when the user chose the executable; an override is never replaced by auto-detection.
     pub is_override: bool,
     pub path: Option<String>,
+    /// Where `path` really leads when it is a symlink (e.g. a distribution's `/usr/bin/exiftool`
+    /// link); `None` when `path` is already the real file or nothing validated.
+    pub resolved_path: Option<String>,
     pub version: Option<String>,
     pub minimum_version: String,
     pub error: Option<AppError>,
@@ -35,6 +38,8 @@ pub fn check(user_override: Option<&Path>) -> (ExifToolStatus, Option<ExifTool>)
             ExifToolStatus {
                 is_override,
                 path: Some(tool.path.display().to_string()),
+                resolved_path: (tool.identity.canonical_path != tool.path)
+                    .then(|| tool.identity.canonical_path.display().to_string()),
                 version: Some(tool.version.clone()),
                 minimum_version,
                 error: None,
@@ -45,6 +50,7 @@ pub fn check(user_override: Option<&Path>) -> (ExifToolStatus, Option<ExifTool>)
             ExifToolStatus {
                 is_override,
                 path: user_override.map(|path| path.display().to_string()),
+                resolved_path: None,
                 version: None,
                 minimum_version,
                 error: Some(error.into()),

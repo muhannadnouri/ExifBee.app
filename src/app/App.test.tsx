@@ -17,6 +17,7 @@ vi.mock('../lib/ipc', () => ipc);
 
 const healthy: ExifToolStatus = {
   isOverride: false,
+  resolvedPath: null,
   path: '/usr/bin/exiftool',
   version: '13.55',
   minimumVersion: '12.76',
@@ -259,6 +260,7 @@ describe('settings and ExifTool dependency', () => {
       ...healthy,
       isOverride: true,
       path: '/opt/exiftool/exiftool',
+      resolvedPath: '/opt/exiftool/Image-ExifTool-13.55/exiftool',
     });
     ipc.resetExiftoolOverride.mockResolvedValue(healthy);
     render(<App />);
@@ -268,6 +270,8 @@ describe('settings and ExifTool dependency', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Choose executable…' }));
     expect(dialog.textContent).toContain('You (custom executable)');
     expect(dialog.textContent).toContain('/opt/exiftool/exiftool');
+    // A symlinked choice shows where it really leads.
+    expect(dialog.textContent).toContain('Resolves to/opt/exiftool/Image-ExifTool-13.55/exiftool');
 
     await user.click(within(dialog).getByRole('button', { name: 'Use automatic detection' }));
     expect(ipc.resetExiftoolOverride).toHaveBeenCalledOnce();

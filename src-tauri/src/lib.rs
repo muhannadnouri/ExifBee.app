@@ -1,6 +1,7 @@
 pub mod adapter;
 pub mod commands;
 pub mod domain;
+pub mod platform;
 pub mod service;
 
 use service::settings::SettingsStore;

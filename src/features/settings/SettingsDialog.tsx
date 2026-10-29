@@ -98,6 +98,12 @@ export function SettingsDialog({
               <dd>{status.version}</dd>
               <dt>Executable</dt>
               <dd>{status.path}</dd>
+              {status.resolvedPath && (
+                <>
+                  <dt>Resolves to</dt>
+                  <dd>{status.resolvedPath}</dd>
+                </>
+              )}
               <dt>Chosen by</dt>
               <dd>{status.isOverride ? 'You (custom executable)' : 'Automatic detection'}</dd>
             </dl>

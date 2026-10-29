@@ -5,4 +5,9 @@ export type ExifToolStatus = {
 /**
  * `true` when the user chose the executable; an override is never replaced by auto-detection.
  */
-isOverride: boolean, path: string | null, version: string | null, minimumVersion: string, error: AppError | null, };
+isOverride: boolean, path: string | null, 
+/**
+ * Where `path` really leads when it is a symlink (e.g. a distribution's `/usr/bin/exiftool`
+ * link); `None` when `path` is already the real file or nothing validated.
+ */
+resolvedPath: string | null, version: string | null, minimumVersion: string, error: AppError | null, };

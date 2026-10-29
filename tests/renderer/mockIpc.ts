@@ -41,6 +41,7 @@ export async function mockIpc(page: Page, reads: MockRead[] = SAMPLE_READS) {
       app_info: () => ({ version: '0.1.0', settingsWarning: null }),
       exiftool_status: () => ({
         isOverride: false,
+        resolvedPath: null,
         path: '/usr/bin/exiftool',
         version: '13.55',
         minimumVersion: '12.76',
