@@ -67,6 +67,8 @@ jobs:
     needs: checks
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    env:
+      EXIFBEE_EVIDENCE_DIR: ${{ github.workspace }}/target-evidence
     strategy:
       fail-fast: false
       matrix:
@@ -135,6 +137,17 @@ jobs:
         with:
           name: coverage
           path: coverage/
+          if-no-files-found: error
+      # Generated evidence (SPEC §12.1): which ExifTool, fixtures, platform and commit each real
+      # test ran against, joined with its @req IDs. Fails if a record lacks IDs or failed.
+      - name: Collect test evidence
+        if: always()
+        run: node scripts/collect-test-evidence.mjs "$EXIFBEE_EVIDENCE_DIR" test-evidence.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: test-evidence-${{ matrix.source }}
+          path: test-evidence.json
           if-no-files-found: error
 
   # Renderer E2E (SPEC §6.1.1 tier 4, DEC-017): behavior and pixel snapshots in the same pinned

@@ -21,3 +21,5 @@ src-tauri/gen/
 /test-results
 # ts-rs output when cargo runs from src-tauri/ instead of the repo root (see .cargo/config.toml)
 /src-tauri/bindings
+/target-evidence
+/test-evidence.json

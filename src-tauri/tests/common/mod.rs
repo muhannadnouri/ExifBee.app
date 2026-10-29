@@ -1,10 +1,8 @@
 //! Helpers shared by the integration test crates.
 #![allow(dead_code)]
 
-use exifbee_lib::adapter::exiftool::read::FileMetadata;
-use exifbee_lib::adapter::exiftool::resolver::{probe, resolve, ExifTool, DEFAULT_TIMEOUT};
-use exifbee_lib::domain::metadata::MetadataValue;
-use serde_json::{json, Value};
+pub mod harness;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -26,27 +24,30 @@ impl TempDir {
 }
 
 impl Drop for TempDir {
+    /// Restores owner permissions first, so a test that made files or folders read-only (or left
+    /// a failure mid-way) still leaves nothing behind.
     fn drop(&mut self) {
+        fn unlock(path: &Path) {
+            use std::os::unix::fs::PermissionsExt;
+            let Ok(meta) = fs::symlink_metadata(path) else {
+                return;
+            };
+            if meta.file_type().is_symlink() {
+                return;
+            }
+            let _ = fs::set_permissions(
+                path,
+                fs::Permissions::from_mode(meta.permissions().mode() | 0o700),
+            );
+            if meta.is_dir() {
+                for entry in fs::read_dir(path).into_iter().flatten().flatten() {
+                    unlock(&entry.path());
+                }
+            }
+        }
+        unlock(&self.0);
         let _ = fs::remove_dir_all(&self.0);
     }
-}
-
-/// The ExifTool under test: `EXIFTOOL` (absolute path) if set, else the app's own discovery.
-pub fn system_exiftool() -> ExifTool {
-    match std::env::var_os("EXIFTOOL") {
-        Some(path) => probe(Path::new(&path), DEFAULT_TIMEOUT),
-        None => resolve(None),
-    }
-    .expect("a supported system ExifTool must be installed for this test")
-}
-
-/// Absolute path of a generated fixture in `tests/fixtures`.
-pub fn fixture(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../tests/fixtures")
-        .join(name)
-        .canonicalize()
-        .unwrap()
 }
 
 /// Executable stand-in for a non-ExifTool or broken binary.
@@ -64,33 +65,4 @@ pub fn fake_executable(dir: &Path, name: &str, script: &str) -> PathBuf {
         .unwrap();
     assert!(status.success());
     path
-}
-
-/// A typed value as plain JSON, so tests compare against `json!(…)` literals; binary values
-/// become `{"binary": <byte length>}`. Panics if the file has no tag with this key.
-pub fn value(file: &FileMetadata, key: &str) -> Value {
-    fn plain(value: &MetadataValue) -> Value {
-        match value {
-            MetadataValue::Text { text } => json!(text),
-            MetadataValue::List { items } => Value::Array(items.iter().map(plain).collect()),
-            MetadataValue::Structure { fields } => Value::Object(
-                fields
-                    .iter()
-                    .map(|field| (field.name.clone(), plain(&field.value)))
-                    .collect(),
-            ),
-            MetadataValue::Binary { byte_length } => json!({ "binary": byte_length }),
-        }
-    }
-    let tag = file
-        .tags
-        .iter()
-        .find(|tag| tag.key == key)
-        .unwrap_or_else(|| {
-            panic!(
-                "no tag {key} in {:?}",
-                file.tags.iter().map(|t| &t.key).collect::<Vec<_>>()
-            )
-        });
-    plain(&tag.value)
 }

@@ -1,23 +1,57 @@
-//! Reading one file through Rust with the real system ExifTool (S0-T06).
+//! Reading files through the app's adapter with the real ExifTool (S0-T06, S2-T05). Every read
+//! runs on a temporary copy in a `Workspace` (S2-T06).
 
 mod common;
 
-use common::{fixture, system_exiftool, value, TempDir};
+use common::harness::{expect_absent, expect_outcome, value, Engine, Workspace};
+use common::TempDir;
 use exifbee_lib::adapter::exiftool::read::{read_metadata, ReadError};
 use exifbee_lib::domain::error::{AppError, ErrorKind};
 use serde_json::json;
-use std::fs;
 use std::path::Path;
+
+// @req FR-005, TST-002
+#[test]
+fn every_fixture_reads_exactly_like_the_exiftool_cli_without_changing_it() {
+    let engine = Engine::new();
+    let mut ws = Workspace::new("read-corpus");
+    for (fixture, exit) in [
+        ("metadata.jpg", 0),
+        ("metadata.png", 0),
+        ("metadata.pdf", 0),
+        ("sidecar.xmp", 0),
+        ("archive.zip", 0),
+        ("no-metadata.jpg", 0),
+        ("plain.txt", 0),
+        ("empty.bin", 1),
+        ("truncated.jpg", 0),
+        ("hostile.xmp", 0),
+        ("palette.png", 0),
+        ("numbers.xmp", 0),
+    ] {
+        let copy = ws.copy(fixture);
+        let before = ws.files();
+        // ExifBee's parsed read equals ExifTool's own JSON, and the exit status is the expected one.
+        assert_eq!(
+            engine.expect_read_matches_cli(&copy),
+            Some(exit),
+            "{fixture}"
+        );
+        ws.expect_unchanged(&copy);
+        ws.expect_no_new_outputs(&before);
+    }
+}
 
 // @req FR-005
 #[test]
 fn reads_image_and_non_image_files_with_group_qualified_tags() {
-    let tool = system_exiftool();
+    let engine = Engine::new();
+    let mut ws = Workspace::new("read-groups");
 
-    let jpeg = read_metadata(&tool, &fixture("metadata.jpg")).unwrap();
-    assert_eq!(jpeg.source_file, fixture("metadata.jpg").to_str().unwrap());
-    assert_eq!(jpeg.error, None);
-    assert!(jpeg.warnings.is_empty());
+    let copy = ws.copy("metadata.jpg");
+    let jpeg = engine.read(&copy);
+    assert_eq!(jpeg.source_file, copy.to_str().unwrap());
+    expect_outcome(&jpeg, None, false);
     // Same tag name in two groups stays two distinct entries.
     assert_eq!(value(&jpeg, "IFD0:Make"), json!("ExifBee EXIF Make"));
     assert_eq!(
@@ -32,57 +66,56 @@ fn reads_image_and_non_image_files_with_group_qualified_tags() {
         ("archive.zip", "ZIP:ZipFileName", "hello.txt"),
         ("plain.txt", "File:FileType", "TXT"),
     ] {
-        let read = read_metadata(&tool, &fixture(name)).unwrap();
+        let read = engine.read(&ws.copy(name));
         assert_eq!(value(&read, key), json!(expected), "{name}");
-        assert_eq!(read.error, None, "{name}");
+        expect_outcome(&read, None, false);
     }
 }
 
 // @req FR-005, NFR-004
 #[test]
 fn per_file_errors_and_warnings_are_structured_not_failures() {
-    let tool = system_exiftool();
+    let engine = Engine::new();
+    let mut ws = Workspace::new("read-outcomes");
 
-    let empty = read_metadata(&tool, &fixture("empty.bin")).unwrap();
-    assert_eq!(empty.error.as_deref(), Some("File is empty"));
+    let empty = engine.read(&ws.copy("empty.bin"));
+    expect_outcome(&empty, Some("File is empty"), false);
 
-    let truncated = read_metadata(&tool, &fixture("truncated.jpg")).unwrap();
-    assert_eq!(truncated.error, None);
-    assert!(!truncated.warnings.is_empty(), "{:?}", truncated.tags);
+    let truncated = engine.read(&ws.copy("truncated.jpg"));
+    expect_outcome(&truncated, None, true);
     assert_eq!(value(&truncated, "File:FileType"), json!("JPEG"));
 }
 
 // @req NFR-005, SEC-002
 #[test]
 fn hostile_and_long_paths_are_read_literally() {
-    let tool = system_exiftool();
-    let dir = TempDir::new("paths");
+    let engine = Engine::new();
+    let mut ws = Workspace::new("read-paths");
     // Five 200-byte components plus Unicode: over 1 KiB, still within Linux PATH_MAX.
-    let mut deep = dir.0.clone();
-    for _ in 0..5 {
-        deep.push("d".repeat(200));
-    }
-    deep.push("é 日本 🐝 spaced".repeat(8));
-    fs::create_dir_all(&deep).unwrap();
     let name = "-lead 'q\" ;$(touch pwned) & `touch pwned2` *?\nnext line.jpg";
-    let hostile = deep.join(name);
-    fs::copy(fixture("metadata.jpg"), &hostile).unwrap();
-
+    let relative = format!(
+        "{}/{}/{name}",
+        vec!["d".repeat(200); 5].join("/"),
+        "é 日本 🐝 spaced".repeat(8)
+    );
+    let hostile = ws.copy_as("metadata.jpg", &relative);
     assert!(hostile.as_os_str().len() > 1024);
+    let before = ws.files();
 
-    let read = read_metadata(&tool, &hostile).unwrap();
+    let read = engine.read(&hostile);
     assert_eq!(read.source_file, hostile.to_str().unwrap());
     assert_eq!(value(&read, "System:FileName"), json!(name));
     assert_eq!(value(&read, "IFD0:Make"), json!("ExifBee EXIF Make"));
-    for planted in ["pwned", "pwned2"] {
-        assert!(!deep.join(planted).exists() && !Path::new(planted).exists());
-    }
+    // Nothing in the name ran: no files appeared anywhere.
+    ws.expect_no_new_outputs(&before);
+    assert!(!Path::new("pwned").exists() && !Path::new("pwned2").exists());
 }
 
 // @req FR-005, NFR-004
 #[test]
 fn invalid_targets_are_rejected_before_exiftool_runs() {
-    let tool = system_exiftool();
+    let engine = Engine::new();
+    let tool = engine.tool.clone();
     let dir = TempDir::new("invalid");
 
     for target in [
@@ -110,7 +143,9 @@ fn errors_serialize_as_kind_and_message_for_ipc() {
 // @req SEC-003
 #[test]
 fn hostile_markup_in_metadata_arrives_as_plain_text() {
-    let read = read_metadata(&system_exiftool(), &fixture("hostile.xmp")).unwrap();
+    let engine = Engine::new();
+    let mut ws = Workspace::new("read-hostile");
+    let read = engine.read(&ws.copy("hostile.xmp"));
     // ExifTool decodes the XML escapes, so the renderer receives live markup as a string; it must
     // only ever be rendered as text (React text nodes, CSP blocks inline scripts as a backstop).
     assert_eq!(
@@ -126,32 +161,34 @@ fn hostile_markup_in_metadata_arrives_as_plain_text() {
 // @req FR-005, FR-023
 #[test]
 fn values_keep_exact_text_structure_lists_binary_and_identity() {
-    let tool = system_exiftool();
+    let engine = Engine::new();
+    let mut ws = Workspace::new("read-values");
 
     // Numbers stay exactly as written: no float rounding, no exponent expansion.
-    let numbers = read_metadata(&tool, &fixture("numbers.xmp")).unwrap();
+    let numbers = engine.read(&ws.copy("numbers.xmp"));
     assert_eq!(value(&numbers, "XMP-dc:Identifier"), json!("007"));
     assert_eq!(value(&numbers, "XMP-dc:Source"), json!("13.50"));
     assert_eq!(value(&numbers, "XMP-dc:Format"), json!("1e3"));
     assert_eq!(
         value(&numbers, "ExifTool:ExifToolVersion"),
-        json!(tool.version)
+        json!(engine.tool.version)
     );
 
     // XMP structures stay nested (not flattened into CreatorCity); lists stay lists.
-    let sidecar = read_metadata(&tool, &fixture("sidecar.xmp")).unwrap();
+    let sidecar = engine.read(&ws.copy("sidecar.xmp"));
     assert_eq!(
         value(&sidecar, "XMP-iptcCore:CreatorContactInfo"),
         json!({ "CiAdrCity": "Fixture City" })
     );
+    expect_absent(&sidecar, "XMP-iptcCore:CreatorCity");
     assert_eq!(value(&sidecar, "XMP-dc:Subject"), json!(["bee", "fixture"]));
 
     // Binary data is a descriptor with its size, never bytes forced into text.
-    let palette = read_metadata(&tool, &fixture("palette.png")).unwrap();
+    let palette = engine.read(&ws.copy("palette.png"));
     assert_eq!(value(&palette, "PNG:Palette"), json!({ "binary": 768 }));
 
     // Same-name tags keep separate identities.
-    let jpeg = read_metadata(&tool, &fixture("metadata.jpg")).unwrap();
+    let jpeg = engine.read(&ws.copy("metadata.jpg"));
     let makes: Vec<_> = jpeg.tags.iter().filter(|tag| tag.name == "Make").collect();
     assert_eq!(makes.len(), 2);
     assert_eq!((makes[0].group1.as_str(), makes[0].copy), ("IFD0", None));
@@ -170,24 +207,22 @@ fn values_keep_exact_text_structure_lists_binary_and_identity() {
 // @req FR-005
 #[test]
 fn empty_non_image_and_read_only_files_parse_cleanly() {
-    let tool = system_exiftool();
-    let empty = read_metadata(&tool, &fixture("empty.bin")).unwrap();
-    assert_eq!(empty.error.as_deref(), Some("File is empty"));
-    assert!(empty
-        .tags
-        .iter()
-        .all(|tag| tag.group1 != "File" || tag.name != "FileType"));
+    let engine = Engine::new();
+    let mut ws = Workspace::new("read-empty");
+    let empty = engine.read(&ws.copy("empty.bin"));
+    expect_outcome(&empty, Some("File is empty"), false);
+    expect_absent(&empty, "File:FileType");
 
-    let no_metadata = read_metadata(&tool, &fixture("no-metadata.jpg")).unwrap();
+    let no_metadata = engine.read(&ws.copy("no-metadata.jpg"));
     assert!(no_metadata
         .tags
         .iter()
         .all(|tag| !tag.group1.starts_with("XMP") && tag.group1 != "IFD0"));
 
     // A text file: ExifTool can describe it but writes nothing to TXT (no writable tags).
-    let text = read_metadata(&tool, &fixture("plain.txt")).unwrap();
+    let text = engine.read(&ws.copy("plain.txt"));
     assert_eq!(value(&text, "File:FileType"), json!("TXT"));
-    assert_eq!(text.error, None);
+    expect_outcome(&text, None, false);
 }
 
 fn parse(json: &str) -> Result<exifbee_lib::adapter::exiftool::read::FileMetadata, ReadError> {

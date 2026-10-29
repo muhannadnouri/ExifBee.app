@@ -9,12 +9,14 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 mod common;
+use common::harness::Engine;
 use common::{fake_executable, TempDir};
 
 // @req FR-001, SEC-002
 #[test]
 fn installed_exiftool_is_resolved_with_absolute_path_and_version() {
-    let tool = common::system_exiftool();
+    let engine = Engine::new();
+    let tool = engine.tool.clone();
 
     assert!(tool.path.is_absolute(), "{:?}", tool.path);
     let (major, minor) = tool.version.split_once('.').expect("version like 13.55");

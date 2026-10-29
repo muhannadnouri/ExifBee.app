@@ -2,7 +2,8 @@
 
 mod common;
 
-use common::{fake_executable, system_exiftool, TempDir};
+use common::harness::Engine;
+use common::{fake_executable, TempDir};
 use exifbee_lib::adapter::exiftool::lists::{enumerate, parse_tags, words, TagCapability};
 use exifbee_lib::adapter::exiftool::process::CancelToken;
 use exifbee_lib::adapter::exiftool::resolver::probe;
@@ -26,9 +27,10 @@ fn tag<'a>(tags: &'a [TagCapability], group1: &str, name: &str) -> Option<&'a Ta
 // @req FR-007, UX-006
 #[test]
 fn the_installed_exiftool_reports_formats_groups_and_writability() {
-    let tool = system_exiftool();
+    let engine = Engine::new();
+    let tool = &engine.tool;
     let started = Instant::now();
-    let listings = enumerate(&tool, &CancelToken::default()).unwrap();
+    let listings = enumerate(tool, &CancelToken::default()).unwrap();
     eprintln!(
         "enumeration took {:?} for ExifTool {}",
         started.elapsed(),
@@ -80,7 +82,7 @@ fn read_only_and_writable_survive_serialization() {
     let dir = TempDir::new("caps-serialize");
     let cache = CapabilityCache::new(&dir.0);
     let snapshot = cache
-        .snapshot(&system_exiftool(), &CancelToken::default())
+        .snapshot(&Engine::new().tool, &CancelToken::default())
         .unwrap();
 
     let json = serde_json::to_vec(&*snapshot).unwrap();
@@ -202,7 +204,7 @@ fn the_cache_is_reused_until_the_executable_or_version_changes() {
 fn tag_listings_page_and_search_with_stable_order() {
     let dir = TempDir::new("caps-page");
     let snapshot = CapabilityCache::new(&dir.0)
-        .snapshot(&system_exiftool(), &CancelToken::default())
+        .snapshot(&Engine::new().tool, &CancelToken::default())
         .unwrap();
     let all = snapshot.page("", 0, 100);
     assert_eq!(all.total, snapshot.listings.tags.len());

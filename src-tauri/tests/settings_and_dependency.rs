@@ -2,7 +2,8 @@
 
 mod common;
 
-use common::{system_exiftool, TempDir};
+use common::harness::Engine;
+use common::TempDir;
 use exifbee_lib::domain::error::ErrorKind;
 use exifbee_lib::service::dependency::check;
 use exifbee_lib::service::settings::{migrate, Settings, SettingsStore, SETTINGS_FILE};
@@ -103,7 +104,8 @@ fn migration_is_deterministic_for_the_current_version() {
 // @req FR-001
 #[test]
 fn status_reports_the_auto_detected_executable() {
-    let tool = system_exiftool();
+    let engine = Engine::new();
+    let tool = engine.tool.clone();
     let (status, resolved) = check(Some(&tool.path));
     assert!(status.is_override);
     assert_eq!(status.path.as_deref(), tool.path.to_str());
@@ -136,7 +138,8 @@ fn a_broken_override_is_reported_not_replaced() {
 #[test]
 fn a_stale_override_is_reported_missing_not_replaced() {
     let dir = TempDir::new("override-stale");
-    let tool = system_exiftool();
+    let engine = Engine::new();
+    let tool = engine.tool.clone();
     // A working override, e.g. chosen in Settings, whose file is later removed (uninstall, moved
     // install, deleted copy).
     let chosen = dir.0.join("exiftool");

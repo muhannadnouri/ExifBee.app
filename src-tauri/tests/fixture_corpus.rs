@@ -3,8 +3,10 @@
 
 mod common;
 
+use common::harness::{golden_dir, Engine, Workspace};
+
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 const UNICODE: &str = "مرحبا · 日本語 · 🐝";
@@ -84,10 +86,6 @@ const EXPECTED: &[(&str, &[&str])] = &[
     ),
 ];
 
-fn fixture_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures")
-}
-
 fn read_args(exiftool: &Path, file: &Path) -> Vec<String> {
     let output = Command::new(exiftool)
         .args(["-args", "-G1", "-a", "-charset", "filename=utf8"])
@@ -104,9 +102,10 @@ fn read_args(exiftool: &Path, file: &Path) -> Vec<String> {
 // @req OPS-003
 #[test]
 fn generated_fixtures_carry_their_known_metadata() {
-    let tool = common::system_exiftool();
+    let engine = Engine::new();
+    let mut ws = Workspace::new("corpus");
 
-    let listed: Vec<String> = fs::read_to_string(fixture_dir().join("SHA256SUMS"))
+    let listed: Vec<String> = fs::read_to_string(golden_dir().join("SHA256SUMS"))
         .unwrap()
         .lines()
         .map(|line| line.split_once("  ").unwrap().1.to_string())
@@ -117,7 +116,7 @@ fn generated_fixtures_carry_their_known_metadata() {
     );
 
     for &(name, lines) in EXPECTED {
-        let actual = read_args(&tool.path, &fixture_dir().join(name));
+        let actual = read_args(&engine.tool.path, &ws.copy(name));
         let with_xmp = matches!(name, "metadata.jpg" | "sidecar.xmp");
         let xmp = if with_xmp { &XMP[..] } else { &[] };
         for line in lines.iter().chain(xmp) {

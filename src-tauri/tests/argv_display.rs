@@ -3,7 +3,8 @@
 
 mod common;
 
-use common::{fake_executable, fixture, system_exiftool, TempDir};
+use common::harness::{Engine, Workspace};
+use common::{fake_executable, TempDir};
 use exifbee_lib::adapter::exiftool::argv::{Args, ArgsError};
 use exifbee_lib::adapter::exiftool::display::{display, Shell};
 use exifbee_lib::adapter::exiftool::read::read_args;
@@ -157,10 +158,11 @@ fn posix_display_round_trips_generated_hostile_strings() {
 // @req FR-015, NFR-005
 #[test]
 fn displayed_read_command_reproduces_the_real_exiftool_read() {
-    let tool = system_exiftool();
-    let dir = TempDir::new("display-read");
-    let hostile = dir.0.join("-it's $(touch pwned) & ‘x’\nnew.jpg");
-    std::fs::copy(fixture("metadata.jpg"), &hostile).unwrap();
+    let engine = Engine::new();
+    let tool = &engine.tool;
+    let mut ws = Workspace::new("display-read");
+    let hostile = ws.copy_as("metadata.jpg", "-it's $(touch pwned) & ‘x’\nnew.jpg");
+    let before = ws.files();
     let args = read_args(&hostile).unwrap();
 
     let direct = Command::new(&tool.path)
@@ -175,7 +177,8 @@ fn displayed_read_command_reproduces_the_real_exiftool_read() {
     assert!(direct.status.success());
     assert_eq!(pasted.stdout, direct.stdout);
     assert!(String::from_utf8_lossy(&direct.stdout).contains("ExifBee EXIF Make"));
-    assert!(!dir.0.join("pwned").exists() && !Path::new("pwned").exists());
+    ws.expect_no_new_outputs(&before);
+    assert!(!Path::new("pwned").exists());
 }
 
 // @req FR-015
