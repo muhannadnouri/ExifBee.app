@@ -16,7 +16,7 @@ const audit = async (page: Page) => {
 };
 
 for (const mode of ['light', 'dark'] as const) {
-  // @req UX-004, UX-003
+  // @req UX-004, UX-003, FR-001
   test.describe(`axe audit (${mode})`, () => {
     test.beforeEach(async ({ page }) => {
       await savedTheme(page, mode);
@@ -38,6 +38,14 @@ for (const mode of ['light', 'dark'] as const) {
       await page.getByRole('button', { name: /Actions/ }).click();
       await page.getByRole('button', { name: /Log/ }).click();
       await expect(page.getByRole('log')).toContainText('IMG_0042.jpg');
+      expect(await audit(page)).toEqual([]);
+    });
+
+    test('settings dialog has no violations', async ({ page }) => {
+      await page.goto('/');
+      await page.getByRole('button', { name: 'Settings' }).click();
+      const dialog = page.getByRole('dialog', { name: 'Settings' });
+      await expect(dialog).toContainText('/usr/bin/exiftool');
       expect(await audit(page)).toEqual([]);
     });
 

@@ -1,11 +1,30 @@
 pub mod adapter;
 pub mod commands;
 pub mod domain;
+pub mod service;
 
+use service::settings::SettingsStore;
+use std::sync::Mutex;
+use tauri::Manager;
+
+/// Builds and runs the app. Startup flow: register the dialog plugin (used from Rust only; no
+/// capability grants it to the renderer) → load settings from the OS config dir into managed
+/// state (never fails; see `SettingsStore::load`) → expose the narrow command set (SEC-008).
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![commands::read_selected_file])
+        .setup(|app| {
+            let dir = app.path().app_config_dir()?;
+            app.manage::<commands::SettingsState>(Mutex::new(SettingsStore::load(&dir)));
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            commands::app_info,
+            commands::exiftool_status,
+            commands::choose_exiftool_override,
+            commands::reset_exiftool_override,
+            commands::read_selected_file,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running ExifBee");
 }

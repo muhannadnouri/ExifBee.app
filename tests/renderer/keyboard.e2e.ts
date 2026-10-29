@@ -25,7 +25,12 @@ test.describe('keyboard-only use', () => {
 
     // Focus is still on Add files; Tab on through the toolbar to the files list.
     await expect(page.getByRole('button', { name: 'Add files…' })).toBeFocused();
-    for (const step of ['Shortcuts', 'Theme', '/home/user/Documents/report.pdf (error)']) {
+    for (const step of [
+      'Shortcuts',
+      'Settings',
+      'Theme',
+      '/home/user/Documents/report.pdf (error)',
+    ]) {
       await page.keyboard.press('Tab');
       await expect(
         page.getByRole(step === 'Theme' ? 'combobox' : 'button', { name: step }),

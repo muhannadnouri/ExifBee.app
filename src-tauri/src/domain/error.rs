@@ -29,6 +29,9 @@ impl AppError {
     }
 }
 
+/// Maps resolver failures to UI categories: `NotFound` → `DependencyMissing` (install hint),
+/// `Unsupported` → `Unsupported` (too old), a relative override → `InvalidInput`; everything else
+/// (launch failure, timeout, bad output) is `ProcessFailure`. The message keeps the details.
 impl From<ResolveError> for AppError {
     fn from(error: ResolveError) -> Self {
         let kind = match error {

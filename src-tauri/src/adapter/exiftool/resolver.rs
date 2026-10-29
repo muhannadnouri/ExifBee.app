@@ -102,13 +102,32 @@ impl fmt::Display for ResolveError {
 
 impl std::error::Error for ResolveError {}
 
-/// Resolves ExifTool from an optional user override, else known locations then PATH.
+/// Finds the ExifTool to use: the user's override if set, else auto-detection (SPEC §3.2).
+///
+/// Thin wrapper over [`resolve_from`] with the real candidate list from `default_candidates`
+/// (known package locations first, then absolute `PATH` entries). Called by
+/// `service::dependency::check`, which every command goes through, so reads and the Settings
+/// status card always agree on which executable is in use.
+///
+/// Gotcha: this spawns `-ver` for each existing candidate until one validates, so it blocks for
+/// tens of milliseconds; call it off the async runtime (see `commands::blocking`).
 pub fn resolve(user_override: Option<&Path>) -> Result<ExifTool, ResolveError> {
     resolve_from(user_override, default_candidates())
 }
 
-/// An override is used exclusively: a broken user choice is reported, never silently replaced.
-/// Otherwise the first candidate that passes validation wins; candidates that do not exist are skipped.
+/// Resolution with an injectable candidate list (tests pass fake executables).
+///
+/// Flow:
+/// 1. Override given → it is the *only* option: relative → `NotAbsolute`, missing → `NotFound`,
+///    otherwise [`probe`]. A broken override is reported, never silently replaced by an
+///    auto-detected ExifTool, because the user chose it deliberately (SPEC §3.2).
+/// 2. No override → try candidates in order; skip ones that do not exist; first that passes
+///    [`probe`] wins.
+/// 3. Nothing passed → the last probe error if any candidate existed (e.g. "too old"), which is
+///    more useful than `NotFound`; otherwise `NotFound` with the searched paths.
+///
+/// Example: `resolve_from(None, vec!["/usr/bin/exiftool".into()])` returns that ExifTool if it
+/// prints a supported version, else why not.
 pub fn resolve_from(
     user_override: Option<&Path>,
     candidates: Vec<PathBuf>,
@@ -137,6 +156,12 @@ pub fn resolve_from(
     }))
 }
 
+/// Auto-detection order: [`KNOWN_LOCATIONS`] first, then `<dir>/exiftool` for each absolute
+/// `PATH` entry, without duplicates.
+///
+/// Why known locations first: apps started from a desktop launcher often get a shorter `PATH`
+/// than a terminal (Arch's `/usr/bin/vendor_perl` is a real example). Relative `PATH` entries
+/// such as `.` are dropped because they depend on the working directory (SEC-002).
 fn default_candidates() -> Vec<PathBuf> {
     let path_dirs = std::env::var_os("PATH")
         .map(|value| std::env::split_paths(&value).collect::<Vec<_>>())
@@ -152,7 +177,16 @@ fn default_candidates() -> Vec<PathBuf> {
     candidates
 }
 
-/// Runs `<path> -ver` without a shell and accepts only a bare `major.minor` version at or above the minimum.
+/// Validates one executable by running `<path> -ver` (argv, no shell) through the shared runner.
+///
+/// Accepts only a bare `major.minor` version at or above [`MINIMUM_VERSION`]; the version
+/// string is returned as printed (e.g. `"13.55"`).
+///
+/// Gotchas:
+/// - The executable name proves nothing; only its `-ver` output does (SPEC §3.2 item 3).
+/// - A script/library mismatch prints `13.55 [Warning: Library version is 13.50]` with exit 0;
+///   that is rejected as `UnexpectedOutput` because the installation is broken.
+/// - A non-executable file fails as `Launch`, a hang as `Timeout` (the child is killed).
 pub fn probe(path: &Path, timeout: Duration) -> Result<ExifTool, ResolveError> {
     let output =
         process::run(path, ["-ver"], timeout, MAX_OUTPUT_BYTES).map_err(|error| match error {

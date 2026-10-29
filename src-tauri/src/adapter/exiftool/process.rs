@@ -35,9 +35,24 @@ impl fmt::Display for RunError {
     }
 }
 
-/// Runs `program args...` with stdin closed; stdout and stderr are read on their own threads so
-/// a chatty child never blocks on a full pipe. The child is killed on timeout or when either
-/// stream exceeds `max_output` bytes.
+/// Runs `program args...` and returns its exit status and raw output. The only process runner in
+/// ExifBee (DEC-015); both the `-ver` probe and metadata reads use it.
+///
+/// Flow: spawn with stdin closed → one thread drains stdout, one drains stderr (so a child that
+/// writes a lot never blocks on a full pipe) → poll `try_wait` every 10 ms → on exit, join the
+/// threads and return.
+///
+/// Limits: the child is killed when `timeout` passes (`Timeout`) or either stream exceeds
+/// `max_output` bytes (`OutputTooLarge`); spawn failures are `Launch`.
+///
+/// Gotchas:
+/// - Arguments are separate OS strings; nothing is ever interpreted by a shell (SEC-002).
+/// - A non-zero exit is *not* an error here: ExifTool exits 1 with valid JSON for per-file
+///   errors, so callers decide what the status means.
+/// - On kill, reader threads are left to finish on their own: a grandchild (e.g. under dash
+///   `/bin/sh`) can hold the pipes open, and waiting for it would turn a timeout into a hang.
+///
+/// Example: `run(Path::new("/usr/bin/exiftool"), ["-ver"], Duration::from_secs(10), 64 * 1024)`.
 // shortcut: no cancellation token, streaming events or process-group kill (a grandchild that
 // keeps the pipes open is abandoned, not killed); S2-T03 builds the full isolated executor.
 pub fn run<I, S>(
@@ -100,6 +115,9 @@ where
     })
 }
 
+/// Drains one pipe on its own thread, keeping at most `max_output` bytes. Reading
+/// `max_output + 1` bytes is how overflow is detected; the shared flag lets [`run`] kill the
+/// child promptly instead of waiting for it to finish writing.
 fn collect(
     pipe: Option<impl Read + Send + 'static>,
     max_output: usize,

@@ -1,0 +1,56 @@
+.settings {
+  display: grid;
+  gap: 1rem;
+}
+
+.settings h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+}
+
+.settings p {
+  margin: 0 0 0.5rem;
+}
+
+.settings-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.25rem 1rem;
+  margin: 0 0 0.75rem;
+}
+
+.settings-facts dt {
+  color: var(--text-muted);
+}
+
+.settings-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.settings-hints {
+  margin: 0 0 0.75rem;
+  border-collapse: collapse;
+}
+
+.settings-hints th,
+.settings-hints td {
+  padding: 0.125rem 1rem 0.125rem 0;
+  text-align: start;
+  vertical-align: top;
+}
+
+.settings-hints th {
+  font-weight: normal;
+  color: var(--text-muted);
+}
+
+.settings-hints code {
+  font-family: var(--font-mono);
+}
+
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}

@@ -43,9 +43,22 @@ impl fmt::Display for ReadError {
 
 impl std::error::Error for ReadError {}
 
-/// Reads one regular file. The path must be absolute, so it can never be taken for an option,
-/// and `--` ends option parsing anyway. A directory is rejected because ExifTool would read
-/// every file inside it.
+/// Reads one file's metadata with `-json -a -G1:4 -s -- <path>` (DEC-015).
+///
+/// Flow: validate the path → run ExifTool through the shared runner → decide by the *output*:
+/// no JSON means a process failure (stderr explains it); JSON means success, even with exit 1,
+/// because ExifTool reports per-file problems inside the JSON as `ExifTool:Error`/`Warning`.
+///
+/// Example result for a JPEG: `source_file = "/photos/a.jpg"`, `tags["IFD0:Make"] = "Canon"`,
+/// `tags["XMP-tiff:Copy1:Make"] = "Canon"`: the same tag name in two groups stays two entries.
+///
+/// Gotchas:
+/// - The path must be absolute, so a name like `-foo.jpg` can never be taken for an option;
+///   `--` ends option parsing as a second guard.
+/// - Directories are rejected: ExifTool would silently read every file inside.
+/// - Tag order is ExifTool's (`preserve_order`); `SourceFile` is removed with `shift_remove`
+///   because a plain `remove` would move the last tag to the front.
+/// - JSON numbers lose their text form (`13.50` → `13.5`); S2-T05 owns raw-value fidelity.
 pub fn read_metadata(tool: &ExifTool, path: &Path) -> Result<FileMetadata, ReadError> {
     if !path.is_absolute() {
         return Err(ReadError::InvalidInput(format!(

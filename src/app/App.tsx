@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { Button } from '../components/atoms/Button';
+import { Notice } from '../components/atoms/Notice';
 import { Drawer } from '../components/Drawer';
 import { Splitter } from '../components/Splitter';
 import { FilePane } from '../features/files/FilePane';
 import { MetadataInspector } from '../features/metadata/MetadataInspector';
 import { ShortcutsDialog } from '../features/help/ShortcutsDialog';
+import { SettingsDialog } from '../features/settings/SettingsDialog';
 import { ThemeSwitcher } from '../features/settings/ThemeSwitcher';
-import { isAppError, readSelectedFile } from '../lib/ipc';
-import type { AppError, FileMetadata } from '../lib/ipc';
+import { appInfo, exiftoolStatus, isAppError, readSelectedFile } from '../lib/ipc';
+import type { AppError, AppInfo, ExifToolStatus, FileMetadata } from '../lib/ipc';
 import './App.css';
 
 export type Layout = {
@@ -62,6 +64,10 @@ export function App() {
   const [layout, setLayout] = useState(loadLayout);
   const [status, setStatus] = useState('');
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [info, setInfo] = useState<AppInfo | null>(null);
+  const [dependency, setDependency] = useState<ExifToolStatus | null>(null);
+  const [warningDismissed, setWarningDismissed] = useState(false);
   const nextLogId = useRef(1);
 
   useEffect(() => {
@@ -71,6 +77,24 @@ export function App() {
       // Storage can be unavailable; the layout still works for this session.
     }
   }, [layout]);
+
+  // Startup: check ExifTool and settings once, so problems show before the first read.
+  useEffect(() => {
+    void appInfo()
+      .then((loaded) => {
+        setInfo(loaded);
+        const warning = loaded.settingsWarning;
+        if (warning)
+          setLog((entries) => [
+            ...entries,
+            { id: nextLogId.current++, level: 'warning', message: warning },
+          ]);
+      })
+      .catch(() => undefined);
+    void exiftoolStatus()
+      .then(setDependency)
+      .catch(() => undefined);
+  }, []);
 
   const update = (change: Partial<Layout>) => setLayout((current) => ({ ...current, ...change }));
   const addLog = (level: LogEntry['level'], message: string) =>
@@ -102,6 +126,10 @@ export function App() {
       const appError = isAppError(error) ? error : { kind: 'Internal', message: String(error) };
       setFailure(appError);
       setStatus('Read failed');
+      // A read can fail because ExifTool went missing; refresh the dependency banner.
+      void exiftoolStatus()
+        .then(setDependency)
+        .catch(() => undefined);
       addLog('error', `${appError.kind}: ${appError.message}`);
     } finally {
       setReading(false);
@@ -111,7 +139,7 @@ export function App() {
   // Global shortcuts are listed in app/shortcuts.ts; a modal dialog suspends them.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (shortcutsOpen) return;
+      if (shortcutsOpen || settingsOpen) return;
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'o') {
         event.preventDefault();
         void addFiles();
@@ -144,6 +172,7 @@ export function App() {
           <Button onClick={() => setShortcutsOpen(true)} title="Keyboard shortcuts">
             Shortcuts
           </Button>
+          <Button onClick={() => setSettingsOpen(true)}>Settings</Button>
         </div>
         <div className="toolbar-end">
           <span className="status" role="status">
@@ -173,6 +202,22 @@ export function App() {
           tabIndex={0}
         >
           <h2 id="metadata-title">Metadata</h2>
+          {dependency?.error && (
+            <Notice
+              tone="error"
+              actions={<Button onClick={() => setSettingsOpen(true)}>Open settings</Button>}
+            >
+              ExifTool is not available: {dependency.error.message}
+            </Notice>
+          )}
+          {info?.settingsWarning && !warningDismissed && (
+            <Notice
+              tone="warning"
+              actions={<Button onClick={() => setWarningDismissed(true)}>Dismiss</Button>}
+            >
+              {info.settingsWarning}
+            </Notice>
+          )}
           <MetadataInspector file={file} failure={failure} reading={reading} />
         </section>
       </div>
@@ -219,6 +264,14 @@ export function App() {
         </Drawer>
       </div>
       <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+      <SettingsDialog
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        status={dependency}
+        onStatus={setDependency}
+        appVersion={info?.version ?? null}
+        settingsWarning={warningDismissed ? null : (info?.settingsWarning ?? null)}
+      />
     </div>
   );
 }

@@ -33,10 +33,21 @@ export const SAMPLE_READS: MockRead[] = [
 /** Replaces the Tauri bridge before any app script runs; each Add files… returns the next read. */
 export async function mockIpc(page: Page, reads: MockRead[] = SAMPLE_READS) {
   await page.addInitScript((queue: MockRead[]) => {
+    const responses: Record<string, () => unknown> = {
+      app_info: () => ({ version: '0.1.0', settingsWarning: null }),
+      exiftool_status: () => ({
+        isOverride: false,
+        path: '/usr/bin/exiftool',
+        version: '13.55',
+        minimumVersion: '12.76',
+        error: null,
+      }),
+      read_selected_file: () => queue.shift() ?? null,
+    };
     Object.assign(window, {
       __TAURI_INTERNALS__: {
         transformCallback: () => 0,
-        invoke: async () => queue.shift() ?? null,
+        invoke: async (command: string) => responses[command]?.() ?? null,
       },
     });
   }, reads);

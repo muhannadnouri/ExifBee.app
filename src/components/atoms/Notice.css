@@ -1,0 +1,32 @@
+.notice-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  margin: 0 0 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border-strong);
+  border-inline-start-width: 4px;
+  border-radius: 4px;
+  background: var(--surface-raised);
+  color: var(--text);
+}
+
+.notice-banner-error {
+  border-inline-start-color: var(--danger);
+}
+
+.notice-banner-warning {
+  border-inline-start-color: var(--warning);
+}
+
+.notice-banner-text {
+  flex: 1 1 16rem;
+  overflow-wrap: anywhere;
+}
+
+.notice-banner-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
