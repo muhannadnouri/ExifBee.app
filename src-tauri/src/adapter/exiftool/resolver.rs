@@ -30,7 +30,8 @@ pub struct ExifTool {
 /// identities are equal, e.g. a distribution symlink and its target. Later stages key the
 /// capability snapshot on version + identity (SPEC §3.2 item 7), so an in-place upgrade or a
 /// different install is never mistaken for the one already inspected.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ExecutableIdentity {
     /// Absolute path with every symlink resolved.
     pub canonical_path: PathBuf,
