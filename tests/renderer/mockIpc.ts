@@ -1,5 +1,8 @@
 import type { Page } from '@playwright/test';
+import type { Commands } from '../../src/lib/ipc';
 
+// Plain shape for addInitScript: the recursive JsonValue in FileMetadata is too deep for
+// Playwright's argument-serialization types (TS2589). Cast back at the typed boundary below.
 export type MockRead = {
   sourceFile: string;
   error: string | null;
@@ -33,7 +36,8 @@ export const SAMPLE_READS: MockRead[] = [
 /** Replaces the Tauri bridge before any app script runs; each Add files… returns the next read. */
 export async function mockIpc(page: Page, reads: MockRead[] = SAMPLE_READS) {
   await page.addInitScript((queue: MockRead[]) => {
-    const responses: Record<string, () => unknown> = {
+    // Typed against the app's command map, so a new or changed command breaks this mock at compile time.
+    const responses: { [K in keyof Commands]: () => Commands[K] } = {
       app_info: () => ({ version: '0.1.0', settingsWarning: null }),
       exiftool_status: () => ({
         isOverride: false,
@@ -42,12 +46,15 @@ export async function mockIpc(page: Page, reads: MockRead[] = SAMPLE_READS) {
         minimumVersion: '12.76',
         error: null,
       }),
-      read_selected_file: () => queue.shift() ?? null,
+      choose_exiftool_override: () => null,
+      reset_exiftool_override: () => responses.exiftool_status(),
+      read_selected_file: () =>
+        (queue.shift() as Commands['read_selected_file'] | undefined) ?? null,
     };
     Object.assign(window, {
       __TAURI_INTERNALS__: {
         transformCallback: () => 0,
-        invoke: async (command: string) => responses[command]?.() ?? null,
+        invoke: async (command: keyof Commands) => responses[command](),
       },
     });
   }, reads);

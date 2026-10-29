@@ -13,10 +13,7 @@ const ipc = vi.hoisted(() => ({
   resetExiftoolOverride: vi.fn(),
 }));
 const { readSelectedFile } = ipc;
-vi.mock('../lib/ipc', () => ({
-  ...ipc,
-  isAppError: (value: unknown) => typeof value === 'object' && value !== null && 'kind' in value,
-}));
+vi.mock('../lib/ipc', () => ipc);
 
 const healthy: ExifToolStatus = {
   isOverride: false,
@@ -206,7 +203,8 @@ describe('settings and ExifTool dependency', () => {
     render(<App />);
 
     const banner = await screen.findByRole('alert');
-    expect(banner.textContent).toContain('ExifTool is not available: ExifTool was not found.');
+    expect(banner.textContent).toContain('ExifTool is not installed');
+    expect(banner.textContent).toContain('ExifTool was not found.');
     await user.click(within(banner).getByRole('button', { name: 'Open settings' }));
     const dialog = screen.getByRole('dialog', { name: 'Settings' });
     expect(dialog.textContent).toContain('sudo apt install libimage-exiftool-perl');

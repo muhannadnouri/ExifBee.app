@@ -8,6 +8,7 @@ use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct ExifToolStatus {
     /// `true` when the user chose the executable; an override is never replaced by auto-detection.
     pub is_override: bool,

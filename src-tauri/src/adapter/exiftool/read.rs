@@ -18,6 +18,7 @@ const READ_ARGS: [&str; 4] = ["-json", "-a", "-G1:4", "-s"];
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct FileMetadata {
     pub source_file: String,
     /// ExifTool's per-file `Error`; the read still returns whatever ExifTool recognized.

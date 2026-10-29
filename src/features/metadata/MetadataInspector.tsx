@@ -1,3 +1,4 @@
+import { ErrorNotice } from '../../components/ErrorNotice';
 import type { AppError, FileMetadata } from '../../lib/ipc';
 import './MetadataInspector.css';
 
@@ -7,13 +8,7 @@ type Props = { file: FileMetadata | null; failure: AppError | null; reading: boo
 
 /** Untrusted ExifTool output is only ever rendered as React text, never as HTML. */
 export function MetadataInspector({ file, failure, reading }: Props) {
-  if (failure) {
-    return (
-      <p role="alert" className="notice notice-error">
-        {failure.message}
-      </p>
-    );
-  }
+  if (failure) return <ErrorNotice error={failure} />;
   if (!file) {
     return (
       <p className="muted">

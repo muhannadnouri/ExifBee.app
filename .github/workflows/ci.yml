@@ -57,6 +57,9 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
       - run: npm run test:unit
+      # `cargo test` regenerates the ts-rs bindings; committed copies must match (DEC-018).
+      - name: Check generated TypeScript bindings are committed
+        run: git diff --exit-code -- src/lib/bindings
 
   # Real ExifTool tests against the oldest supported distribution package and the tested
   # official release, so the minimum in SPEC §3.2 is backed by evidence (DEC-014).

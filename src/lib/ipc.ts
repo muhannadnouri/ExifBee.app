@@ -1,33 +1,50 @@
 import { invoke } from '@tauri-apps/api/core';
+import type { AppError } from './bindings/AppError';
+import type { AppInfo } from './bindings/AppInfo';
+import type { ExifToolStatus } from './bindings/ExifToolStatus';
+import type { FileMetadata } from './bindings/FileMetadata';
+import { toAppError } from './errors';
 
-// Mirrors the Rust `FileMetadata` / `AppError` shapes; S1-T05 replaces these with typed bindings.
-export type FileMetadata = {
-  sourceFile: string;
-  error: string | null;
-  warnings: string[];
-  tags: Record<string, unknown>;
+export type { AppError, AppInfo, ExifToolStatus, FileMetadata };
+export type { ErrorKind } from './bindings/ErrorKind';
+
+/**
+ * Every Rust command and its result type (DEC-018). Payload types are generated from Rust by
+ * ts-rs into `./bindings`; this map must list exactly the commands in `generate_handler!`
+ * (src-tauri/src/lib.rs), which `ipc.test.ts` checks. None take arguments yet: paths come from
+ * dialogs opened in Rust, never from the renderer (SEC-008).
+ */
+export type Commands = {
+  app_info: AppInfo;
+  exiftool_status: ExifToolStatus;
+  choose_exiftool_override: ExifToolStatus | null;
+  reset_exiftool_override: ExifToolStatus;
+  read_selected_file: FileMetadata | null;
 };
-export type AppError = { kind: string; message: string };
 
-/** Opens the native file dialog in Rust and reads the chosen file; `null` when cancelled. */
-export const readSelectedFile = () => invoke<FileMetadata | null>('read_selected_file');
+/** Runtime list of `Commands` keys; the `Record` type keeps it complete. */
+export const COMMAND_NAMES = Object.keys({
+  app_info: true,
+  exiftool_status: true,
+  choose_exiftool_override: true,
+  reset_exiftool_override: true,
+  read_selected_file: true,
+} satisfies Record<keyof Commands, true>) as (keyof Commands)[];
 
-export const isAppError = (value: unknown): value is AppError =>
-  typeof value === 'object' && value !== null && 'kind' in value && 'message' in value;
+/** The only `invoke` call in the app (lint-enforced); rejections always become an `AppError`. */
+async function call<K extends keyof Commands>(command: K): Promise<Commands[K]> {
+  try {
+    return await invoke<Commands[K]>(command);
+  } catch (error) {
+    throw toAppError(error);
+  }
+}
 
-export type ExifToolStatus = {
-  isOverride: boolean;
-  path: string | null;
-  version: string | null;
-  minimumVersion: string;
-  error: AppError | null;
-};
-export type AppInfo = { version: string; settingsWarning: string | null };
-
-export const appInfo = () => invoke<AppInfo>('app_info');
+export const appInfo = () => call('app_info');
 /** Re-resolves ExifTool now; also the UI's Retry. */
-export const exiftoolStatus = () => invoke<ExifToolStatus>('exiftool_status');
+export const exiftoolStatus = () => call('exiftool_status');
 /** Native file dialog in Rust; saved only if valid. `null` when cancelled. */
-export const chooseExiftoolOverride = () =>
-  invoke<ExifToolStatus | null>('choose_exiftool_override');
-export const resetExiftoolOverride = () => invoke<ExifToolStatus>('reset_exiftool_override');
+export const chooseExiftoolOverride = () => call('choose_exiftool_override');
+export const resetExiftoolOverride = () => call('reset_exiftool_override');
+/** Opens the native file dialog in Rust and reads the chosen file; `null` when cancelled. */
+export const readSelectedFile = () => call('read_selected_file');

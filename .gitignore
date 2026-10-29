@@ -19,3 +19,5 @@ src-tauri/gen/
 /coverage
 /playwright-report
 /test-results
+# ts-rs output when cargo runs from src-tauri/ instead of the repo root (see .cargo/config.toml)
+/src-tauri/bindings

@@ -2,12 +2,9 @@ import { useState } from 'react';
 import { Button } from '../../components/atoms/Button';
 import { Notice } from '../../components/atoms/Notice';
 import { Dialog } from '../../components/Dialog';
-import {
-  chooseExiftoolOverride,
-  exiftoolStatus,
-  isAppError,
-  resetExiftoolOverride,
-} from '../../lib/ipc';
+import { ErrorNotice } from '../../components/ErrorNotice';
+import { toAppError } from '../../lib/errors';
+import { chooseExiftoolOverride, exiftoolStatus, resetExiftoolOverride } from '../../lib/ipc';
 import type { AppError, ExifToolStatus } from '../../lib/ipc';
 import './SettingsDialog.css';
 
@@ -54,7 +51,7 @@ export function SettingsDialog({
       onStatus(next);
       setMessage(next.error ? null : `Using ExifTool ${next.version ?? ''} at ${next.path ?? ''}.`);
     } catch (error) {
-      setFailure(isAppError(error) ? error : { kind: 'Internal', message: String(error) });
+      setFailure(toAppError(error));
     } finally {
       setBusy(false);
     }
@@ -71,7 +68,7 @@ export function SettingsDialog({
             <p className="muted">Checking…</p>
           ) : status.error ? (
             <>
-              <Notice tone="error">{status.error.message}</Notice>
+              <ErrorNotice error={status.error} />
               {(status.error.kind === 'DependencyMissing' ||
                 status.error.kind === 'Unsupported') && (
                 <>
@@ -105,7 +102,7 @@ export function SettingsDialog({
               <dd>{status.isOverride ? 'You (custom executable)' : 'Automatic detection'}</dd>
             </dl>
           )}
-          {failure && <Notice tone="error">{failure.message}</Notice>}
+          {failure && <ErrorNotice error={failure} />}
           {message && <p role="status">{message}</p>}
           <div className="settings-actions">
             <Button disabled={busy} onClick={() => void run(exiftoolStatus)}>

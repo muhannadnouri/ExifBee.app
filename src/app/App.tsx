@@ -9,7 +9,9 @@ import { MetadataInspector } from '../features/metadata/MetadataInspector';
 import { ShortcutsDialog } from '../features/help/ShortcutsDialog';
 import { SettingsDialog } from '../features/settings/SettingsDialog';
 import { ThemeSwitcher } from '../features/settings/ThemeSwitcher';
-import { appInfo, exiftoolStatus, isAppError, readSelectedFile } from '../lib/ipc';
+import { ErrorNotice } from '../components/ErrorNotice';
+import { toAppError } from '../lib/errors';
+import { appInfo, exiftoolStatus, readSelectedFile } from '../lib/ipc';
 import type { AppError, AppInfo, ExifToolStatus, FileMetadata } from '../lib/ipc';
 import './App.css';
 
@@ -123,7 +125,7 @@ export function App() {
       else addLog('info', `Read ${file.sourceFile}`);
       for (const warning of file.warnings) addLog('warning', `${file.sourceFile}: ${warning}`);
     } catch (error) {
-      const appError = isAppError(error) ? error : { kind: 'Internal', message: String(error) };
+      const appError = toAppError(error);
       setFailure(appError);
       setStatus('Read failed');
       // A read can fail because ExifTool went missing; refresh the dependency banner.
@@ -203,12 +205,10 @@ export function App() {
         >
           <h2 id="metadata-title">Metadata</h2>
           {dependency?.error && (
-            <Notice
-              tone="error"
+            <ErrorNotice
+              error={dependency.error}
               actions={<Button onClick={() => setSettingsOpen(true)}>Open settings</Button>}
-            >
-              ExifTool is not available: {dependency.error.message}
-            </Notice>
+            />
           )}
           {info?.settingsWarning && !warningDismissed && (
             <Notice

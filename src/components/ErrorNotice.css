@@ -1,0 +1,9 @@
+.error-notice-title,
+.error-notice-detail,
+.error-notice-hint {
+  display: block;
+}
+
+.error-notice-hint {
+  color: var(--text-muted);
+}

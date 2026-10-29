@@ -15,6 +15,7 @@ pub type SettingsState = Mutex<SettingsStore>;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct AppInfo {
     pub version: String,
     pub settings_warning: Option<String>,
