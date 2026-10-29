@@ -1,3 +1,5 @@
+pub mod adapter;
+
 pub fn run() {
     tauri::Builder::default()
         .run(tauri::generate_context!())

@@ -114,7 +114,7 @@ export function checkTraceability({ spec, specPath, sources }) {
   return errors;
 }
 
-const CODE_DIRS = ['src', 'src-tauri/src', 'tests', 'scripts'];
+const CODE_DIRS = ['src', 'src-tauri/src', 'src-tauri/tests', 'tests', 'scripts'];
 const CODE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.mjs', '.cjs', '.rs']);
 
 function readSources(root) {
