@@ -1,0 +1,17 @@
+.button {
+  color: var(--text);
+  padding: 0.25rem 0.625rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--surface-raised);
+  cursor: pointer;
+}
+
+.button:hover:not(:disabled) {
+  background: var(--surface);
+}
+
+.button:disabled {
+  color: var(--text-muted);
+  cursor: default;
+}

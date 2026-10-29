@@ -17,3 +17,5 @@ src-tauri/gen/
 /.claude/
 /.memsearch/
 /coverage
+/playwright-report
+/test-results

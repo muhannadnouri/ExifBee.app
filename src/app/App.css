@@ -1,0 +1,97 @@
+/* Shell layout: toolbar, workspace (takes the rest, never under 6rem), drawers. Rem sizes scale
+   with text and display zoom; 1280×800 at 200% scaling is a 640×400 page. */
+.shell {
+  display: grid;
+  grid-template-rows: auto minmax(6rem, 1fr) auto;
+  height: 100%;
+  overflow: hidden;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--border);
+}
+
+.toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.toolbar-end {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-inline-start: auto;
+}
+
+.status {
+  color: var(--text-muted);
+}
+
+/* The files pane never takes more than 45% of the window, so metadata stays usable. */
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, min(var(--files-width), 45%)) auto minmax(0, 1fr);
+  min-height: 0;
+}
+
+.pane {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.75rem;
+  background: var(--surface);
+}
+
+.pane > h2 {
+  margin-bottom: 0.5rem;
+}
+
+/* Drawer headers always show; open drawers share --drawer-height, capped so the workspace keeps
+   most of a short window. */
+.drawers {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+}
+
+.drawers-open {
+  height: min(var(--drawer-height), 40vh);
+}
+
+.log {
+  margin: 0;
+  padding-inline-start: 1.5rem;
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.log-warning {
+  color: var(--warning);
+}
+
+.log-error {
+  color: var(--danger);
+}
+
+/* Very narrow windows: stack the panes and hide the column splitter. */
+@media (max-width: 30rem) {
+  .workspace {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .workspace > .splitter-vertical {
+    display: none;
+  }
+
+  .files-pane {
+    max-height: 35vh;
+  }
+}

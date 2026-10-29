@@ -1,7 +1,8 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './app/App';
-import './app/base.css';
+import './styles/tokens.css';
+import './styles/base.css';
 
 const root = document.getElementById('root');
 if (!root) throw new Error('ExifBee: #root element missing from index.html');

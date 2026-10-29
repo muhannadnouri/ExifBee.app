@@ -1,0 +1,37 @@
+/* Element defaults shared by every component. Component styles live next to each component. */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  line-height: 1.4;
+}
+
+h1,
+h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+/* Form controls inherit text styles; their look lives in components/atoms. */
+button,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* Secondary text such as empty states; shared by several components. */
+.muted {
+  color: var(--text-muted);
+}

@@ -1,4 +1,5 @@
 import type { FileMetadata } from '../../lib/ipc';
+import './FilePane.css';
 
 const baseName = (path: string) => path.split('/').pop() || path;
 
@@ -10,7 +11,7 @@ type Props = {
 
 /** Files read in this session; any format is listed, with the full path as its accessible name. */
 export function FilePane({ files, selected, onSelect }: Props) {
-  if (files.length === 0) return <p className="empty">No files yet. Use Add files… to start.</p>;
+  if (files.length === 0) return <p className="muted">No files yet. Use Add files… to start.</p>;
   return (
     <ul className="file-list">
       {files.map((file) => {

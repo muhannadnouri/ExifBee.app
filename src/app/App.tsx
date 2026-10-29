@@ -1,10 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
-import type { CSSProperties, ReactNode } from 'react';
+import type { CSSProperties } from 'react';
+import { Button } from '../components/atoms/Button';
+import { Drawer } from '../components/Drawer';
 import { Splitter } from '../components/Splitter';
 import { FilePane } from '../features/files/FilePane';
 import { MetadataInspector } from '../features/metadata/MetadataInspector';
+import { ThemeSwitcher } from '../features/settings/ThemeSwitcher';
 import { isAppError, readSelectedFile } from '../lib/ipc';
 import type { AppError, FileMetadata } from '../lib/ipc';
+import './App.css';
 
 export type Layout = {
   filesWidth: number;
@@ -47,34 +51,6 @@ export function loadLayout(): Layout {
 }
 
 type LogEntry = { id: number; level: 'info' | 'warning' | 'error'; message: string };
-
-function Drawer(props: {
-  id: string;
-  title: string;
-  open: boolean;
-  onToggle: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <section className="drawer" aria-labelledby={`${props.id}-title`}>
-      <h2 className="drawer-header" id={`${props.id}-title`}>
-        <button
-          type="button"
-          aria-expanded={props.open}
-          aria-controls={props.id}
-          onClick={props.onToggle}
-        >
-          {props.open ? '▾' : '▸'} {props.title}
-        </button>
-      </h2>
-      {props.open && (
-        <div className="drawer-body" id={props.id}>
-          {props.children}
-        </div>
-      )}
-    </section>
-  );
-}
 
 export function App() {
   const [files, setFiles] = useState<FileMetadata[]>([]);
@@ -153,19 +129,21 @@ export function App() {
       <header className="toolbar" data-region>
         <h1 className="app-name">ExifBee</h1>
         <div role="toolbar" aria-label="Main toolbar" className="toolbar-actions">
-          <button
-            type="button"
+          <Button
             onClick={addFiles}
             disabled={reading}
             aria-keyshortcuts="Control+O"
             title="Add files (Ctrl+O)"
           >
             Add files…
-          </button>
+          </Button>
         </div>
-        <span className="status" role="status">
-          {reading ? 'Reading…' : ''}
-        </span>
+        <div className="toolbar-end">
+          <span className="status" role="status">
+            {reading ? 'Reading…' : ''}
+          </span>
+          <ThemeSwitcher />
+        </div>
       </header>
 
       <div className="workspace">
@@ -215,7 +193,7 @@ export function App() {
           open={layout.actionsOpen}
           onToggle={() => update({ actionsOpen: !layout.actionsOpen })}
         >
-          <p className="empty">No staged changes. Metadata editing is not available yet.</p>
+          <p className="muted">No staged changes. Metadata editing is not available yet.</p>
         </Drawer>
         <Drawer
           id="log-drawer"
@@ -224,7 +202,7 @@ export function App() {
           onToggle={() => update({ logOpen: !layout.logOpen })}
         >
           {log.length === 0 ? (
-            <p className="empty">No activity yet.</p>
+            <p className="muted">No activity yet.</p>
           ) : (
             <ol className="log" role="log" aria-label="Session log">
               {log.map((entry) => (

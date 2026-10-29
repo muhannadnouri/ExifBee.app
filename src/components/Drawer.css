@@ -1,0 +1,30 @@
+.drawer {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* Inside an open drawer area, each open drawer takes an equal share of the height. */
+.drawer:has(.drawer-body) {
+  flex: 1 1 0;
+}
+
+.drawer-header button {
+  width: 100%;
+  padding: 0.375rem 0.75rem;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--surface-raised);
+  font-weight: 600;
+  text-align: start;
+  cursor: pointer;
+}
+
+.drawer-body {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.5rem 0.75rem;
+  background: var(--surface);
+}

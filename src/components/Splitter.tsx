@@ -1,4 +1,5 @@
 import type { KeyboardEvent, PointerEvent } from 'react';
+import './Splitter.css';
 
 const STEP = 16;
 

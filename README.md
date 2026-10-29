@@ -59,6 +59,8 @@ npm test        # unit + real-ExifTool integration tests
 
 Installers (AppImage, `.deb`, `.rpm`) are not produced yet; bundling is disabled until task S5-T05 in the spec.
 
+Renderer end-to-end tests (Playwright, see spec §6.1.1): `npm run test:e2e:renderer` runs the behavior tests locally (first run `npx playwright install chromium`); `npm run test:e2e:renderer:docker` runs everything, including screenshot comparisons, in the pinned Playwright Docker image and writes any missing baselines. If Docker needs root on your machine, run `DOCKER="sudo docker" npm run test:e2e:renderer:docker` so only Docker runs as root and the files stay yours.
+
 Other scripts: `npm run fixtures` (regenerate `tests/fixtures`), `npm run test:unit`, `npm run test:integration`, `npm run coverage` (needs `cargo-llvm-cov`), `npm run audit:deps` (needs `cargo-audit`), `npm run lint`, `npm run typecheck`, `npm run format`, `npm run format:check`.
 
 ## License

@@ -1,6 +1,6 @@
 ---
 title: ExifBee — Software Design & Delivery Specification
-spec_version: 1.0.7
+spec_version: 1.0.9
 status: approved-baseline-for-implementation
 created: 2026-10-28
 product: ExifBee
@@ -89,7 +89,7 @@ For every task:
 
 ### 0.5 Versioning and change control
 
-- This is **SDD v1.0.7** (v1.0.0 was the initial implementation baseline). Product release versioning is independent (start application releases at `0.x`).
+- This is **SDD v1.0.9** (v1.0.0 was the initial implementation baseline). Product release versioning is independent (start application releases at `0.x`).
 - Spec `PATCH`: clarifications or test links without behavior change. `MINOR`: additive requirements/tasks. `MAJOR`: materially changed behavior, security guarantees, scope, or compatibility.
 - Record important decisions in the **Decision log (§18)** with date, ID, rationale, tradeoff, and replacement when superseded; don't introduce separate ADR Markdown files.
 - CI validates frontmatter, unique IDs, valid status syntax, task/gate references, and test references. A machine report is generated on demand rather than maintained manually.
@@ -326,7 +326,8 @@ exifbee/
     features/operations/           # staged plan and confirmation
     features/jobs/                 # progress and log views
     features/settings/             # dependency status, theme
-    components/                    # accessible shared UI primitives
+    components/                    # accessible shared UI primitives (one CSS file each)
+      atoms/                       # basic building blocks: Button, Select, …
     lib/ipc/                       # generated/checked typed contract
     lib/models/                    # view models, not process control
   src-tauri/
@@ -534,6 +535,7 @@ No raw `innerHTML`, untrusted HTML rendering, or arbitrary image/media preview l
 - Persist explicit user preference; system mode listens to OS theme changes; avoid a flash of wrong theme on launch.
 - Supports keyboard-only flow, clear heading/landmark hierarchy, distinguish color and icons with text, accessible modals, reduced motion, 125–200% display scaling, small laptop width and enlarged text.
 - Keyboard shortcuts must be discoverable in menus/tooltips and must not conflict with normal text-input behavior. Proposed: Ctrl/Cmd+O add files, Ctrl/Cmd+F find tag, Ctrl/Cmd+Enter open plan (not run without confirmation), Esc close transient panel, Ctrl/Cmd+, settings. Final shortcuts tested on platforms.
+- **Recorded by S1-T02 (2026-10-28):** tokens live once in `src/styles/tokens.css` using CSS `light-dark()`, so System mode is pure CSS (`color-scheme: light dark`) and follows OS changes live without a JS listener; Light/Dark pin `data-theme` on `<html>`. `light-dark()` needs WebKitGTK ≥ 2.46 (Safari 17.5 engine), which every supported Linux target ships via updates. The explicit choice is stored in WebView `localStorage` and applied by `public/theme-init.js`, a classic script in `<head>`, before first paint; it moves into the S1-T04 config file only if a Rust-side consumer needs it. Contrast for every rendered foreground/background pair is asserted per mode by `src/styles/tokens.test.ts`. Styling is plain CSS: global `tokens.css` and `base.css` (element resets) only, and one co-located CSS file per component; basic controls are atoms in `src/components/atoms/`, added only when a second use or a shared look exists, not ahead of need.
 
 ### 5.5 Copy and error-state language
 
@@ -555,12 +557,34 @@ No raw `innerHTML`, untrusted HTML rendering, or arbitrary image/media preview l
 | Rust unit/property | `cargo test`, proptest (selective) | command planning, path checks, policies, error mapping, tokenizing | each PR |
 | UI component/unit | Vitest + React Testing Library + axe | states, forms, tag rendering, theme, keyboard | each PR |
 | Real integration | Rust harness + real pinned ExifTool in sandbox/temp directory | all read/write/delete/copy/backups/output scenarios | each PR on Linux |
-| Renderer E2E | WebdriverIO browser mode or Playwright with mocked IPC | complex UX without needing a native window | each PR |
-| Native desktop E2E | WebdriverIO `@wdio/tauri-service` using documented supported provider | select/read/stage/write/verify/log and dependency failures | Linux CI, later OS matrix |
+| Renderer E2E | Playwright (`@playwright/test`, Chromium) with mocked IPC (DEC-017) | complex UX, real layout/CSS/theme behavior and pinned-container screenshot snapshots without a native window | each PR |
+| Native desktop E2E | WebdriverIO `@wdio/tauri-service` using documented supported provider; final tool chosen at S3-T07 (DEC-017) | select/read/stage/write/verify/log and dependency failures | Linux CI, later OS matrix |
 | Performance | controlled fixture runner, UI profiling, RSS/CPU metrics | 1k/10k inventory, large metadata, batch writes, cancellation | scheduled + pre-release |
 | Manual signoff | checklist and recorded OS/app/tool versions | window behaviors, OS install, accessibility, AV warnings, external drives | per platform gate |
 
 **Tauri note:** Direct `tauri-driver` supports Linux/Windows, not WKWebView on macOS. The current WebdriverIO Tauri service documents an **embedded driver provider supporting macOS**; assess security/testing-only plugin configuration, isolate from production builds if appropriate, and verify on real macOS rather than assuming direct `tauri-driver` parity. Pin compatible versions of E2E plugins to avoid drift.
+
+#### 6.1.1 Pyramid strategy (living rules)
+
+Tiers, from many fast tests to few realistic ones. Each tier proves what the tiers below cannot; none substitutes for another.
+
+| Tier | What runs | Where / command | Proves | Never proves |
+|---|---|---|---|---|
+| 1 Static | nothing executes | `lint`, `typecheck`, `format:check`, `audit:deps`, `test:traceability` | types, style, dependency advisories, requirement links | runtime behavior |
+| 2 Unit / component | functions; React components in jsdom (no layout) | `src/**/*.test.ts(x)`, `scripts/*.test.mjs`, Rust `#[cfg(test)]`; `test:unit` | logic, state, focus, escaping, token contrast | real layout, real browser, ExifTool |
+| 3 Real integration | Rust adapter with real ExifTool on fixtures in temp copies | `src-tauri/tests/*.rs`; `test:integration` | ExifTool behavior, paths, errors, bounds, file safety | UI |
+| 4 Renderer E2E | built frontend in Chromium, Tauri bridge mocked | `tests/renderer/*.e2e.ts` (`behavior`, anywhere) and `*.snapshots.e2e.ts` (pixels, pinned container only); `test:e2e:renderer`, `test:e2e:renderer:docker` | real layout/CSS, theme pre-paint, OS-theme following, visual snapshots | WebKitGTK quirks, Rust, native window |
+| 5 Native desktop E2E | the built app: WebKitGTK + Rust + real ExifTool | `tests/e2e/` from S3-T07 | full user journeys on the real engine | other OSes until their stage |
+| 6 Manual sign-off | maintainer on the real OS | task checkbox notes | look/feel, OS integration, what tiers 4–5 cannot reach yet | regressions (not repeatable) |
+
+Rules:
+1. Put each assertion at the lowest tier that can observe it; move up only when a lower tier cannot (layout → 4; WebKitGTK rendering, window behavior → 5, else 6).
+2. A mocked-IPC test (tiers 2 and 4) is never evidence for Rust or ExifTool behavior; file reads/writes are proven at tier 3 with real ExifTool.
+3. Screenshot snapshots cover stable visual contracts only, stay few, compare one baseline per snapshot from the pinned Playwright image, and are regenerated only for a reviewed intentional visual change.
+4. A task's completion note states which tiers proved each acceptance item and which gaps remain open, and where they are tracked (e.g. native 200% check → S3-T07).
+5. A check that keeps recurring in manual sign-off is promoted to an automated tier at the first task that can host it.
+
+Update this section (with a DEC entry when a tool changes) when: S3-T07 chooses the native tier tool (candidates: WebdriverIO `@wdio/tauri-service`, `tauri-plugin-playwright`, `tauri-pilot`; any in-app control plugin must be a default-off cargo feature absent from release builds, with a test proving it); a new platform stage adds a runner (S7 macOS, S8 Windows); a tier becomes a required CI check or changes its gating (§6.5); or a tier's tool, browser image or snapshot policy changes.
 
 ### 6.2 Fixture corpus
 
@@ -632,7 +656,7 @@ Record hardware/OS, ExifTool version, cold/warm cache, file sizes, throughput, p
 **Goal:** Stable UI architecture with three working themes, interaction states, and typed IPC, before editing files.
 
 - [x] **S1-T01 — Build the application shell.** *(2026-10-28, `feature/linux-mvp`: maintainer approved the shell in `npm run dev` (`GDK_SCALE=2` had no visible effect on that Wayland session, so 200% was not exercised natively); 200% evidence is the renderer layout measured at 1280×800, 910×512 and 640×400 with every critical control in view and no page scroll; window minimum lowered to 480×320 because 800×560 cannot fit the 640×400 logical screen of a 1280×800 display at 200%; recorded exceptions — CI deferred by the maintainer, native 200% check and native E2E open until S3-T07.)* Implement toolbar, file pane, metadata area, operation drawer and log drawer; keyboard navigation and resize behavior. Keep empty state useful. **Acceptance:** Works at 1280×800 and a small laptop viewport; no overlap/clipped critical controls at 200% scaling; focus survives pane changes. **Evidence:** `UX-001`, `UX-005`, `UX-008` component/E2E.
-- [ ] **S1-T02 — Theme tokens and persistence.** Implement light/dark/system using semantic CSS variables; use OS preference listener and persisted explicit setting loaded before full UI render. **Acceptance:** All three modes persist/reload correctly, system mode follows OS change, no visibly wrong flash, all primary text/control contrasts meet target; screenshot snapshots in both themes. **Evidence:** `UX-002`, `UX-003`.
+- [x] **S1-T02 — Theme tokens and persistence.** *(2026-10-29, `feature/linux-mvp`: maintainer approved both themes in `npm run dev`. Tier 2: token contrast per mode, preference persistence, pre-paint script, switcher. Tier 4 (DEC-017): pre-paint before app scripts, all modes persist across reloads, System follows OS changes live, explicit theme ignores OS; six light/dark snapshot baselines generated in the pinned Playwright image and reviewed. Open: snapshot comparison runs first in CI (deferred by the maintainer); native WebKitGTK relaunch flash and live OS following → S3-T07.)* Implement light/dark/system using semantic CSS variables; use OS preference listener and persisted explicit setting loaded before full UI render. **Acceptance:** All three modes persist/reload correctly, system mode follows OS change, no visibly wrong flash, all primary text/control contrasts meet target; screenshot snapshots in both themes. **Evidence:** `UX-002`, `UX-003`.
 - [ ] **S1-T03 — Basic accessibility contract.** Accessible menus/dialogs, focus management, ARIA labels/live regions, reduced-motion preference, keyboard shortcuts, WCAG AA audit with axe. **Acceptance:** Critical flows operable keyboard-only; no critical automated axe failures and manual spot check completed; interactive controls have accessible names. **Evidence:** `UX-004`, `FR-019`.
 - [ ] **S1-T04 — Settings and dependency states.** Config save/load with safe default/version migration; dependency status card, path override input/file picker, reload/retry and About information. **Acceptance:** Missing/invalid ExifTool gives actionable message rather than crash; override persists and can reset; corrupt config recovers with explicit warning. **Evidence:** `FR-001`, `FR-002`, `NFR-007`, `UX-010`.
 - [ ] **S1-T05 — Typed IPC and error taxonomy.** Generate or type-check Rust↔TS command bindings; define `AppError` domains (`DependencyMissing`, `Unsupported`, `InvalidInput`, `ScopeViolation`, `ProcessFailure`, `Cancelled`, `PartialFailure`, `VerificationMismatch`, `Internal`) with user-safe messages. **Acceptance:** Frontend handles every error category; no `any` or freeform stringly `invoke` at feature call sites. **Evidence:** `NFR-004`, `SEC-008` unit/UI tests.
@@ -1185,6 +1209,7 @@ An AI agent may mark a stage complete only after **all** stage task criteria, te
 | DEC-014 | 2026-10-28 | Linux CI runs on the pinned `ubuntu-24.04` runner with apt system packages (Tauri v2 prerequisites), a pinned Rust toolchain and a Cargo cache; real-ExifTool integration tests run as a matrix of the Ubuntu 24.04 apt package (12.76) and the official release (13.55, fetched from SourceForge and checked against CPAN's SHA-256); the ExifTool minimum becomes 12.76 | Ubuntu is the standard, cheapest-to-provision base and matches the oldest-glibc rule for future Linux packages (S5-T05); testing the oldest distribution package plus the tested release turns the minimum into evidence instead of a guess; the Arch container (DEC-013) existed only to satisfy a 13.55 floor no stable Debian/Ubuntu release ships | Active |
 | DEC-015 | 2026-10-28 | Canonical read arguments are `-json -a -G1:4 -s -- <absolute path>`, run through the single bounded runner `adapter/exiftool/process.rs` that the `-ver` probe also uses | `-G1:4` keeps both the family-1 group and the copy number, so same-name tags in different groups and repeated instances stay distinct; `-G4` alone (previously in §4.3) drops the group name; one runner avoids two competing execution paths | Active |
 | DEC-016 | 2026-10-28 | Maintainer exception: S1 work may start while gate `G0` waits only on S0-T05's first CI run, which the maintainer deferred to the MVP draft PR | All other S0 tasks are done with local and manual evidence; G0 stays open and is not claimed until that CI run passes and proves failing changes are blocked; any S0-T05 fallout (e.g. the ExifTool 12.76 leg) is fixed before G1 is claimed | Active |
+| DEC-017 | 2026-10-29 | Renderer E2E tier uses plain `@playwright/test` (Chromium, mocked Tauri bridge) with two projects: `behavior` (runs anywhere) and `snapshots` (pixel baselines generated and compared only in the pinned `mcr.microsoft.com/playwright` image, locally via Docker and in CI); the served app is a production build (`vite preview`) | Spec allowed WebdriverIO browser mode or Playwright; Playwright has first-class screenshot comparison, auto-waiting and request routing (used to prove theme pre-paint); pinned container makes fonts and browser identical between machines; production build loads CSS as `<link>` like the packaged app. Not chosen: `tauri-plugin-playwright` and `tauri-pilot` drive the real webview through an in-app control server, so they compete for the native tier and are evaluated at S3-T07, not here. The mock replaces Tauri internals (`window.__TAURI_INTERNALS__`); move it onto the S1-T05 typed IPC seam when that lands | Active |
 
 **To record a future decision:** add a row with a new `DEC-###` ID, date, adopted choice, tradeoff and supersession reference; edit relevant requirement, task and tests together. Do not erase a superseded decision or create a separate `.md` ADR file.
 
@@ -1216,4 +1241,4 @@ Use official upstream sources when implementing or updating behaviors. APIs and 
 
 **A successful SDD process is not the number of checked boxes.** It is an auditable invariant: requirements remain stable and intentional, tests assert user-visible behavior, CI verifies those tests, release gates reflect the platform actually exercised, and documentation stays small enough to remain accurate.
 
-**End of ExifBee SDD v1.0.7.**
+**End of ExifBee SDD v1.0.9.**

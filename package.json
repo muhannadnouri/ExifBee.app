@@ -16,6 +16,8 @@
     "test": "npm run test:unit && npm run test:integration",
     "test:unit": "vitest run && cargo test --manifest-path src-tauri/Cargo.toml --lib",
     "test:integration": "cargo test --manifest-path src-tauri/Cargo.toml --test \"*\"",
+    "test:e2e:renderer": "playwright test --project=behavior",
+    "test:e2e:renderer:docker": "${DOCKER:-docker} run --rm --ipc=host --user \"$(id -u):$(id -g)\" -e HOME=/tmp -v \"$PWD\":/work -w /work mcr.microsoft.com/playwright:v1.64.1-noble@sha256:47b510dd9230bf0b9bfc9b20102241e577ea7a99334ab4c3ca19f19770e9b8ea npx playwright test",
     "test:traceability": "node scripts/check-spec-traceability.mjs && vitest run scripts",
     "fixtures": "node scripts/generate-fixtures.mjs",
     "lint": "eslint . && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
@@ -33,6 +35,7 @@
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
+    "@playwright/test": "1.64.1",
     "@tauri-apps/cli": "2.12.4",
     "@testing-library/dom": "10.4.2",
     "@testing-library/react": "16.3.3",

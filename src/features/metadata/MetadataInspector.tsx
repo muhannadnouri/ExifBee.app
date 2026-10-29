@@ -1,4 +1,5 @@
 import type { AppError, FileMetadata } from '../../lib/ipc';
+import './MetadataInspector.css';
 
 const display = (value: unknown) => (typeof value === 'string' ? value : JSON.stringify(value));
 
@@ -15,7 +16,7 @@ export function MetadataInspector({ file, failure, reading }: Props) {
   }
   if (!file) {
     return (
-      <p className="empty">
+      <p className="muted">
         {reading
           ? 'Reading…'
           : 'Add a file (Ctrl+O) to inspect its metadata. Any format ExifTool recognizes works, not only photos.'}

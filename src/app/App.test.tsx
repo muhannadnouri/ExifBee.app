@@ -86,6 +86,27 @@ describe('application shell', () => {
   });
 });
 
+// @req UX-002
+describe('theme switcher', () => {
+  it('applies the chosen theme immediately and keeps it across reloads', async () => {
+    const user = userEvent.setup();
+    const { unmount } = render(<App />);
+    const select = screen.getByRole('combobox', { name: 'Theme' });
+    expect((select as HTMLSelectElement).value).toBe('system');
+
+    await user.selectOptions(select, 'dark');
+    expect(document.documentElement.dataset.theme).toBe('dark');
+    unmount();
+
+    render(<App />);
+    expect((screen.getByRole('combobox', { name: 'Theme' }) as HTMLSelectElement).value).toBe(
+      'dark',
+    );
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Theme' }), 'system');
+    expect(document.documentElement.dataset.theme).toBeUndefined();
+  });
+});
+
 // @req UX-008
 describe('resizing and layout persistence', () => {
   it('resizes the files pane with the keyboard within bounds and remembers it', async () => {

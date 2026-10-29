@@ -1,0 +1,18 @@
+.splitter {
+  background: var(--border);
+  touch-action: none;
+}
+
+.splitter:hover {
+  background: var(--border-strong);
+}
+
+.splitter-vertical {
+  width: 0.375rem;
+  cursor: col-resize;
+}
+
+.splitter-horizontal {
+  height: 0.375rem;
+  cursor: row-resize;
+}

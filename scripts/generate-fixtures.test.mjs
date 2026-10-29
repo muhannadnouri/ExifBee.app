@@ -44,7 +44,12 @@ describe('legal audit', () => {
     const media =
       /\.(jpe?g|png|gif|webp|tiff?|heic|avif|bmp|dng|cr[23w]|nef|arw|orf|raf|rw2|mp4|mov|m4v|avi|mkv|mp3|m4a|flac|wav|ogg|pdf|zip|7z|rar|psd|svg|ico|icns)$/i;
     const stray = files.filter(
-      (file) => media.test(file) && !generated.has(file) && !file.startsWith('src-tauri/icons/'),
+      (file) =>
+        media.test(file) &&
+        !generated.has(file) &&
+        !file.startsWith('src-tauri/icons/') &&
+        // Renderer snapshot baselines: screenshots of ExifBee's own UI with mock data (DEC-017).
+        !/^tests\/renderer\/__screenshots__\/.+\.png$/.test(file),
     );
     expect(stray).toEqual([]);
     expect(FIXTURE_DIR.startsWith(root)).toBe(true);

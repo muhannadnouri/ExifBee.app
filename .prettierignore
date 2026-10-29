@@ -4,3 +4,6 @@ src-tauri/gen
 package-lock.json
 docs/SPEC.md
 coverage
+playwright-report
+test-results
+tests/renderer/__screenshots__
