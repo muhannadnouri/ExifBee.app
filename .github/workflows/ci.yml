@@ -8,11 +8,12 @@ permissions:
   contents: read
 
 jobs:
+  # Actions are pinned to commit SHAs and the image to a digest; update them in reviewed changes.
   # Arch Linux pinned to one Arch Linux Archive snapshot: every system package, including
   # ExifTool from pacman, is a fixed version that meets the tested minimum (SPEC DEC-013).
   quality:
     runs-on: ubuntu-latest
-    container: archlinux:base
+    container: archlinux:base@sha256:e82623936fa1a69700b48e98b058df6eaab18b737c27473a7234a40fdecb9413
     env:
       ARCH_SNAPSHOT: 2026/10/27
       RUST_TOOLCHAIN: 1.98.1
@@ -24,10 +25,12 @@ jobs:
           pacman -Syyuu --noconfirm --needed git base-devel curl file openssl webkit2gtk-4.1 \
             librsvg xdotool appmenu-gtk-module rustup perl-image-exiftool
           "$EXIFTOOL" -ver
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # The container runs as root but the workspace is owned by the runner user; the legal audit runs git.
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
           cache: npm
@@ -36,7 +39,7 @@ jobs:
           rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal \
             --component clippy,rustfmt,llvm-tools-preview
           rustup default "$RUST_TOOLCHAIN"
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
         with:
           tool: cargo-llvm-cov@0.9.1
       - run: npm ci
@@ -47,7 +50,7 @@ jobs:
       - run: npm run build
       # Runs every Vitest and cargo test (unit and real-ExifTool integration) under coverage.
       - run: npm run coverage
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: coverage
@@ -58,12 +61,14 @@ jobs:
   dependency-audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
           cache: npm
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
         with:
           tool: cargo-audit@0.22.2
       - run: npm run audit:deps
