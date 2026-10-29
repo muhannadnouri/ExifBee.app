@@ -1,58 +1,158 @@
-import { renderToString } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
-import { App, ReadResult } from './App';
+// @vitest-environment jsdom
+import { cleanup, render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { FileMetadata } from '../lib/ipc';
+import { App, DEFAULT_LAYOUT, FILES_WIDTH, LAYOUT_KEY, loadLayout } from './App';
 
-// @req OPS-001
-describe('App', () => {
-  it('renders the application heading and the open-file action', () => {
-    const html = renderToString(<App />);
-    expect(html).toContain('<h1>ExifBee</h1>');
-    expect(html).toContain('Open file…');
+const { readSelectedFile } = vi.hoisted(() => ({ readSelectedFile: vi.fn() }));
+vi.mock('../lib/ipc', () => ({
+  readSelectedFile,
+  isAppError: (value: unknown) => typeof value === 'object' && value !== null && 'kind' in value,
+}));
+
+const file = (sourceFile: string, extra: Partial<FileMetadata> = {}): FileMetadata => ({
+  sourceFile,
+  error: null,
+  warnings: [],
+  tags: { 'File:FileType': 'JPEG', 'XMP-dc:Title': '<img src=x onerror=alert(1)>' },
+  ...extra,
+});
+
+beforeEach(() => {
+  localStorage.clear();
+  readSelectedFile.mockReset();
+});
+afterEach(cleanup);
+
+// @req UX-001, UX-005
+describe('application shell', () => {
+  it('shows the toolbar, both panes and both drawers with useful empty states', () => {
+    render(<App />);
+    expect(screen.getByRole('toolbar', { name: 'Main toolbar' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Add files…' })).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'Files' }).textContent).toContain('No files yet');
+    expect(screen.getByRole('region', { name: 'Metadata' }).textContent).toContain('Ctrl+O');
+    expect(screen.getByRole('button', { name: /Actions/ }).getAttribute('aria-expanded')).toBe(
+      'false',
+    );
+    expect(screen.getByRole('button', { name: /Log/ }).getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('adds read files to the files pane, inspects the selected one and logs the outcome', async () => {
+    const user = userEvent.setup();
+    readSelectedFile
+      .mockResolvedValueOnce(file('/photos/a.jpg'))
+      .mockResolvedValueOnce(file('/docs/b.pdf', { error: 'File format error' }))
+      .mockResolvedValueOnce(file('/photos/a.jpg'));
+    render(<App />);
+
+    for (let i = 0; i < 3; i++)
+      await user.click(screen.getByRole('button', { name: 'Add files…' }));
+
+    const files = within(screen.getByRole('region', { name: 'Files' }));
+    // Re-adding the same path does not duplicate it.
+    expect(files.getAllByRole('button').map((button) => button.getAttribute('aria-label'))).toEqual(
+      ['/docs/b.pdf (error)', '/photos/a.jpg'],
+    );
+    const metadata = screen.getByRole('region', { name: 'Metadata' });
+    expect(within(metadata).getByRole('table').textContent).toContain('/photos/a.jpg');
+    // Hostile values render as text only.
+    expect(metadata.innerHTML).not.toContain('<img');
+
+    await user.click(files.getByRole('button', { name: '/docs/b.pdf (error)' }));
+    expect(within(metadata).getByRole('alert').textContent).toBe(
+      'ExifTool error: File format error',
+    );
+
+    await user.click(screen.getByRole('button', { name: /Log/ }));
+    expect(screen.getByRole('log').textContent).toContain('error: /docs/b.pdf: File format error');
+  });
+
+  it('reports a failed read instead of failing silently, and a cancelled dialog changes nothing', async () => {
+    const user = userEvent.setup();
+    readSelectedFile.mockResolvedValueOnce(null).mockRejectedValueOnce({
+      kind: 'DependencyMissing',
+      message: 'ExifTool was not found. Install it using your Linux package manager.',
+    });
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: 'Add files…' }));
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByRole('region', { name: 'Files' }).textContent).toContain('No files yet');
+
+    await user.keyboard('{Control>}o{/Control}');
+    expect(screen.getByRole('alert').textContent).toContain('ExifTool was not found');
   });
 });
 
-// @req SEC-003, NFR-004
-describe('ReadResult', () => {
-  it('renders hostile metadata as text, never as HTML', () => {
-    const html = renderToString(
-      <ReadResult
-        state={{
-          status: 'read',
-          file: {
-            sourceFile: '/x/<b>name</b>.jpg',
-            error: null,
-            warnings: [],
-            tags: { 'XMP-dc:Title': '<img src=x onerror=alert(1)>', 'XMP-dc:Subject': ['a', 'b'] },
-          },
-        }}
-      />,
-    );
-    expect(html).not.toContain('<img');
-    expect(html).not.toContain('<b>');
-    expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
-    expect(html).toContain('[&quot;a&quot;,&quot;b&quot;]');
+// @req UX-008
+describe('resizing and layout persistence', () => {
+  it('resizes the files pane with the keyboard within bounds and remembers it', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    const splitter = screen.getByRole('separator', { name: 'Resize files pane' });
+    splitter.focus();
+
+    await user.keyboard('{ArrowRight}');
+    expect(splitter.getAttribute('aria-valuenow')).toBe(String(DEFAULT_LAYOUT.filesWidth + 16));
+    await user.keyboard('{End}');
+    expect(splitter.getAttribute('aria-valuenow')).toBe(String(FILES_WIDTH.max));
+    await user.keyboard('{Home}{ArrowLeft}');
+    expect(splitter.getAttribute('aria-valuenow')).toBe(String(FILES_WIDTH.min));
+    expect(document.activeElement).toBe(splitter);
+    expect(loadLayout().filesWidth).toBe(FILES_WIDTH.min);
   });
 
-  it('shows structured errors and per-file ExifTool errors as alerts', () => {
-    const failed = renderToString(
-      <ReadResult
-        state={{
-          status: 'failed',
-          error: { kind: 'DependencyMissing', message: 'ExifTool was not found.' },
-        }}
-      />,
-    );
-    expect(failed).toContain('role="alert"');
-    expect(failed).toContain('DependencyMissing');
+  it('ignores corrupt or out-of-range stored layout', () => {
+    localStorage.setItem(LAYOUT_KEY, '{"filesWidth":99999,"drawerHeight":"tall","logOpen":1}');
+    expect(loadLayout()).toEqual({ ...DEFAULT_LAYOUT, filesWidth: FILES_WIDTH.max });
+    localStorage.setItem(LAYOUT_KEY, 'not json');
+    expect(loadLayout()).toEqual(DEFAULT_LAYOUT);
+  });
+});
 
-    const perFile = renderToString(
-      <ReadResult
-        state={{
-          status: 'read',
-          file: { sourceFile: '/x/empty.bin', error: 'File is empty', warnings: [], tags: {} },
-        }}
-      />,
-    );
-    expect(perFile).toMatch(/role="alert">ExifTool error: (<!-- -->)?File is empty/);
+// @req UX-001
+describe('keyboard navigation and focus', () => {
+  it('keeps focus on the control used when drawers open, close and panes change', async () => {
+    const user = userEvent.setup();
+    readSelectedFile.mockResolvedValueOnce(file('/a.jpg')).mockResolvedValueOnce(file('/b.jpg'));
+    render(<App />);
+    await user.click(screen.getByRole('button', { name: 'Add files…' }));
+    await user.click(screen.getByRole('button', { name: 'Add files…' }));
+
+    const logToggle = screen.getByRole('button', { name: /Log/ });
+    await user.click(logToggle);
+    expect(logToggle.getAttribute('aria-expanded')).toBe('true');
+    expect(document.activeElement).toBe(logToggle);
+    expect(screen.getByRole('separator', { name: 'Resize drawers' })).toBeTruthy();
+    await user.click(logToggle);
+    expect(document.activeElement).toBe(logToggle);
+
+    const first = screen.getByRole('button', { name: '/a.jpg' });
+    await user.click(first);
+    expect(document.activeElement).toBe(first);
+    expect(first.getAttribute('aria-current')).toBe('true');
+  });
+
+  it('cycles F6 / Shift+F6 through toolbar, files, metadata and drawers', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    const addFiles = screen.getByRole('button', { name: 'Add files…' });
+    const filesPane = screen.getByRole('region', { name: 'Files' });
+    const metadataPane = screen.getByRole('region', { name: 'Metadata' });
+    const actionsToggle = screen.getByRole('button', { name: /Actions/ });
+
+    addFiles.focus();
+    await user.keyboard('{F6}');
+    expect(document.activeElement).toBe(filesPane);
+    await user.keyboard('{F6}');
+    expect(document.activeElement).toBe(metadataPane);
+    await user.keyboard('{F6}');
+    expect(document.activeElement).toBe(actionsToggle);
+    await user.keyboard('{F6}');
+    expect(document.activeElement).toBe(addFiles);
+    await user.keyboard('{Shift>}{F6}{/Shift}');
+    expect(document.activeElement).toBe(actionsToggle);
   });
 });

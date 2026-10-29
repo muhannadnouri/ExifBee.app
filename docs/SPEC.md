@@ -1,6 +1,6 @@
 ---
 title: ExifBee — Software Design & Delivery Specification
-spec_version: 1.0.6
+spec_version: 1.0.7
 status: approved-baseline-for-implementation
 created: 2026-10-28
 product: ExifBee
@@ -89,7 +89,7 @@ For every task:
 
 ### 0.5 Versioning and change control
 
-- This is **SDD v1.0.6** (v1.0.0 was the initial implementation baseline). Product release versioning is independent (start application releases at `0.x`).
+- This is **SDD v1.0.7** (v1.0.0 was the initial implementation baseline). Product release versioning is independent (start application releases at `0.x`).
 - Spec `PATCH`: clarifications or test links without behavior change. `MINOR`: additive requirements/tasks. `MAJOR`: materially changed behavior, security guarantees, scope, or compatibility.
 - Record important decisions in the **Decision log (§18)** with date, ID, rationale, tradeoff, and replacement when superseded; don't introduce separate ADR Markdown files.
 - CI validates frontmatter, unique IDs, valid status syntax, task/gate references, and test references. A machine report is generated on demand rather than maintained manually.
@@ -631,7 +631,7 @@ Record hardware/OS, ExifTool version, cold/warm cache, file sizes, throughput, p
 
 **Goal:** Stable UI architecture with three working themes, interaction states, and typed IPC, before editing files.
 
-- [ ] **S1-T01 — Build the application shell.** Implement toolbar, file pane, metadata area, operation drawer and log drawer; keyboard navigation and resize behavior. Keep empty state useful. **Acceptance:** Works at 1280×800 and a small laptop viewport; no overlap/clipped critical controls at 200% scaling; focus survives pane changes. **Evidence:** `UX-001`, `UX-005`, `UX-008` component/E2E.
+- [x] **S1-T01 — Build the application shell.** *(2026-10-28, `feature/linux-mvp`: maintainer approved the shell in `npm run dev` with and without `GDK_SCALE=2`; renderer layout measured at 1280×800, 910×512 and 640×400 with every critical control in view and no page scroll; window minimum lowered to 480×320 so it fits a 1280×800 screen at 200%; recorded exceptions — CI deferred by the maintainer, native E2E arrives with S3-T07.)* Implement toolbar, file pane, metadata area, operation drawer and log drawer; keyboard navigation and resize behavior. Keep empty state useful. **Acceptance:** Works at 1280×800 and a small laptop viewport; no overlap/clipped critical controls at 200% scaling; focus survives pane changes. **Evidence:** `UX-001`, `UX-005`, `UX-008` component/E2E.
 - [ ] **S1-T02 — Theme tokens and persistence.** Implement light/dark/system using semantic CSS variables; use OS preference listener and persisted explicit setting loaded before full UI render. **Acceptance:** All three modes persist/reload correctly, system mode follows OS change, no visibly wrong flash, all primary text/control contrasts meet target; screenshot snapshots in both themes. **Evidence:** `UX-002`, `UX-003`.
 - [ ] **S1-T03 — Basic accessibility contract.** Accessible menus/dialogs, focus management, ARIA labels/live regions, reduced-motion preference, keyboard shortcuts, WCAG AA audit with axe. **Acceptance:** Critical flows operable keyboard-only; no critical automated axe failures and manual spot check completed; interactive controls have accessible names. **Evidence:** `UX-004`, `FR-019`.
 - [ ] **S1-T04 — Settings and dependency states.** Config save/load with safe default/version migration; dependency status card, path override input/file picker, reload/retry and About information. **Acceptance:** Missing/invalid ExifTool gives actionable message rather than crash; override persists and can reset; corrupt config recovers with explicit warning. **Evidence:** `FR-001`, `FR-002`, `NFR-007`, `UX-010`.
@@ -1184,6 +1184,7 @@ An AI agent may mark a stage complete only after **all** stage task criteria, te
 | DEC-013 | 2026-10-28 | Linux CI quality job runs in an `archlinux:base` container whose pacman mirror is pinned to one Arch Linux Archive date (`ARCH_SNAPSHOT` in `.github/workflows/ci.yml`); Rust toolchain pinned the same way (`RUST_TOOLCHAIN`) | Ubuntu runner packages are older than the tested ExifTool minimum (Ubuntu 24.04 ships 12.76), and S0-T05 requires ExifTool from a package manager; a dated snapshot makes every system package, including ExifTool and WebKitGTK, a fixed version, so CI has no mutable dependencies. Raise the snapshot date deliberately in a reviewed change | Superseded by DEC-014 |
 | DEC-014 | 2026-10-28 | Linux CI runs on the pinned `ubuntu-24.04` runner with apt system packages (Tauri v2 prerequisites), a pinned Rust toolchain and a Cargo cache; real-ExifTool integration tests run as a matrix of the Ubuntu 24.04 apt package (12.76) and the official release (13.55, fetched from SourceForge and checked against CPAN's SHA-256); the ExifTool minimum becomes 12.76 | Ubuntu is the standard, cheapest-to-provision base and matches the oldest-glibc rule for future Linux packages (S5-T05); testing the oldest distribution package plus the tested release turns the minimum into evidence instead of a guess; the Arch container (DEC-013) existed only to satisfy a 13.55 floor no stable Debian/Ubuntu release ships | Active |
 | DEC-015 | 2026-10-28 | Canonical read arguments are `-json -a -G1:4 -s -- <absolute path>`, run through the single bounded runner `adapter/exiftool/process.rs` that the `-ver` probe also uses | `-G1:4` keeps both the family-1 group and the copy number, so same-name tags in different groups and repeated instances stay distinct; `-G4` alone (previously in §4.3) drops the group name; one runner avoids two competing execution paths | Active |
+| DEC-016 | 2026-10-28 | Maintainer exception: S1 work may start while gate `G0` waits only on S0-T05's first CI run, which the maintainer deferred to the MVP draft PR | All other S0 tasks are done with local and manual evidence; G0 stays open and is not claimed until that CI run passes and proves failing changes are blocked; any S0-T05 fallout (e.g. the ExifTool 12.76 leg) is fixed before G1 is claimed | Active |
 
 **To record a future decision:** add a row with a new `DEC-###` ID, date, adopted choice, tradeoff and supersession reference; edit relevant requirement, task and tests together. Do not erase a superseded decision or create a separate `.md` ADR file.
 
@@ -1215,4 +1216,4 @@ Use official upstream sources when implementing or updating behaviors. APIs and 
 
 **A successful SDD process is not the number of checked boxes.** It is an auditable invariant: requirements remain stable and intentional, tests assert user-visible behavior, CI verifies those tests, release gates reflect the platform actually exercised, and documentation stays small enough to remain accurate.
 
-**End of ExifBee SDD v1.0.6.**
+**End of ExifBee SDD v1.0.7.**

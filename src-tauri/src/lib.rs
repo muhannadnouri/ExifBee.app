@@ -18,6 +18,9 @@ mod tests {
         let context: tauri::Context = tauri::generate_context!();
         let config = context.config();
         assert_eq!(config.identifier, "app.exifbee");
-        assert_eq!(config.app.windows[0].title, "ExifBee");
+        let window = &config.app.windows[0];
+        assert_eq!(window.title, "ExifBee");
+        // 1280×800 at 200% scaling leaves a 640×400 logical screen; the window must fit it.
+        assert!(window.min_width.unwrap() <= 640.0 && window.min_height.unwrap() <= 400.0);
     }
 }

@@ -1,5 +1,217 @@
-/* Placeholder until S1-T02 theme tokens; follows the OS light/dark preference. */
+/* Layout only. Colors are the OS system colors until S1-T02 adds theme tokens. */
 :root {
   color-scheme: light dark;
   font-family: system-ui, sans-serif;
+  --line: color-mix(in srgb, CanvasText 18%, transparent);
+  --muted: color-mix(in srgb, CanvasText 65%, Canvas);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: Canvas;
+  color: CanvasText;
+  line-height: 1.4;
+}
+
+h1,
+h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+:focus-visible {
+  outline: 2px solid Highlight;
+  outline-offset: 2px;
+}
+
+/* Rows: toolbar, workspace (takes the rest, never under 6rem), drawers. Rem sizes scale with
+   text and display zoom. */
+.shell {
+  display: grid;
+  grid-template-rows: auto minmax(6rem, 1fr) auto;
+  height: 100%;
+  overflow: hidden;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.status {
+  color: var(--muted);
+}
+
+/* The files pane never takes more than 45% of the window, so metadata stays usable. */
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, min(var(--files-width), 45%)) auto minmax(0, 1fr);
+  min-height: 0;
+}
+
+.pane {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.75rem;
+}
+
+.pane > h2 {
+  margin-bottom: 0.5rem;
+}
+
+.empty {
+  color: var(--muted);
+}
+
+.notice {
+  margin: 0 0 0.5rem;
+}
+
+.notice-error {
+  font-weight: 600;
+}
+
+.file-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.file-list button {
+  display: block;
+  width: 100%;
+  padding: 0.25rem 0.5rem;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.file-list button[aria-current='true'] {
+  background: color-mix(in srgb, Highlight 25%, transparent);
+}
+
+.tags {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.tags caption {
+  text-align: start;
+  padding-bottom: 0.5rem;
+  overflow-wrap: anywhere;
+}
+
+.tags th,
+.tags td {
+  padding: 0.125rem 0.5rem;
+  border-bottom: 1px solid var(--line);
+  text-align: start;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.tags td:first-child {
+  white-space: nowrap;
+}
+
+.splitter {
+  background: var(--line);
+  touch-action: none;
+}
+
+.splitter-vertical {
+  width: 0.375rem;
+  cursor: col-resize;
+}
+
+.splitter-horizontal {
+  height: 0.375rem;
+  cursor: row-resize;
+}
+
+/* Drawer headers always show; open bodies share --drawer-height, capped so the workspace keeps
+   most of a short window (1280×800 at 200% scaling is a 640×400 page). */
+.drawers {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--line);
+}
+
+.drawers-open {
+  height: min(var(--drawer-height), 40vh);
+}
+
+.drawer {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.drawers-open .drawer:has(.drawer-body) {
+  flex: 1 1 0;
+}
+
+.drawer-header button {
+  width: 100%;
+  padding: 0.375rem 0.75rem;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  text-align: start;
+  cursor: pointer;
+}
+
+.drawer-body {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.5rem 0.75rem;
+}
+
+.log {
+  margin: 0;
+  padding-inline-start: 1.5rem;
+  font-family: ui-monospace, monospace;
+  overflow-wrap: anywhere;
+}
+
+/* Very narrow windows: stack the panes and hide the column splitter. */
+@media (max-width: 30rem) {
+  .workspace {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .workspace > .splitter-vertical {
+    display: none;
+  }
+
+  .files-pane {
+    max-height: 35vh;
+  }
 }
