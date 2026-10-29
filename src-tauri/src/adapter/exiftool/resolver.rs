@@ -3,7 +3,7 @@
 //! always spawned directly with an argument vector, never through a shell (SEC-002).
 
 use super::argv::Args;
-use super::process::{self, RunError};
+use super::process::{self, CancelToken, RunError};
 use crate::platform;
 use std::collections::HashSet;
 use std::fmt;
@@ -214,6 +214,7 @@ pub fn probe(path: &Path, timeout: Duration) -> Result<ExifTool, ResolveError> {
         Args::new().options(&["-ver"]).as_slice(),
         timeout,
         MAX_OUTPUT_BYTES,
+        &CancelToken::default(),
     )
     .map_err(|error| match error {
         RunError::Launch(message) => ResolveError::Launch {
@@ -223,6 +224,11 @@ pub fn probe(path: &Path, timeout: Duration) -> Result<ExifTool, ResolveError> {
         RunError::Timeout(after) => ResolveError::Timeout {
             path: path.into(),
             after,
+        },
+        // A `-ver` probe is never cancelled (its token is never triggered).
+        RunError::Cancelled => ResolveError::Launch {
+            path: path.into(),
+            message: error.to_string(),
         },
         RunError::OutputTooLarge(_) => ResolveError::UnexpectedOutput {
             path: path.into(),

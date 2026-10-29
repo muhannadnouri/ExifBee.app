@@ -290,3 +290,23 @@ describe('settings and ExifTool dependency', () => {
     expect(dialog.textContent).toContain('version 13.55 in use');
   });
 });
+
+// @req UX-005, NFR-004
+describe('failed background calls', () => {
+  it('surface as a banner and a log entry, never as an unhandled rejection', async () => {
+    const user = userEvent.setup();
+    ipc.appInfo.mockRejectedValue({ kind: 'Internal', message: 'settings lock poisoned' });
+    ipc.exiftoolStatus.mockRejectedValue({ kind: 'ProcessFailure', message: 'probe crashed' });
+    render(<App />);
+
+    const banner = await within(screen.getByRole('region', { name: 'Metadata' })).findByRole(
+      'alert',
+    );
+    expect(banner.textContent).toContain('ExifTool did not complete');
+    expect(banner.textContent).toContain('probe crashed');
+    await user.click(screen.getByRole('button', { name: /Log/ }));
+    expect(screen.getByRole('log').textContent).toContain(
+      'App info: Internal: settings lock poisoned',
+    );
+  });
+});

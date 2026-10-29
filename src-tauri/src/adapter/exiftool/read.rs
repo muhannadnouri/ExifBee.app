@@ -1,7 +1,7 @@
 //! Reads one file's metadata as structured JSON (S0-T06 spike; S2-T05 builds the full parser).
 
 use super::argv::{Args, ArgsError};
-use super::process::{self, RunError};
+use super::process::{self, CancelToken, RunError};
 use super::resolver::ExifTool;
 use serde::Serialize;
 use serde_json::{Map, Value};
@@ -32,12 +32,14 @@ pub struct FileMetadata {
 pub enum ReadError {
     InvalidInput(String),
     ProcessFailure(String),
+    Cancelled,
 }
 
 impl fmt::Display for ReadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidInput(message) | Self::ProcessFailure(message) => f.write_str(message),
+            Self::Cancelled => f.write_str("the read was cancelled"),
         }
     }
 }
@@ -80,8 +82,18 @@ pub fn read_metadata(tool: &ExifTool, path: &Path) -> Result<FileMetadata, ReadE
     }
 
     let args = read_args(path).map_err(|error| ReadError::InvalidInput(error.to_string()))?;
-    let output = process::run(&tool.path, args.as_slice(), READ_TIMEOUT, MAX_READ_OUTPUT)
-        .map_err(|error: RunError| ReadError::ProcessFailure(format!("ExifTool {error}")))?;
+    let output = process::run(
+        &tool.path,
+        args.as_slice(),
+        READ_TIMEOUT,
+        MAX_READ_OUTPUT,
+        // shortcut: reads are not cancellable from the UI yet; S5-T02 passes the job's token.
+        &CancelToken::default(),
+    )
+    .map_err(|error: RunError| match error {
+        RunError::Cancelled => ReadError::Cancelled,
+        error => ReadError::ProcessFailure(format!("ExifTool {error}")),
+    })?;
 
     // ExifTool exits 1 when a file has an Error tag but still prints its JSON, so the output,
     // not the exit status, decides; with no JSON at all, stderr explains the failure.

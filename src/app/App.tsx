@@ -55,6 +55,16 @@ export function loadLayout(): Layout {
   };
 }
 
+/** When the status check itself fails, the banner still explains why instead of staying silent. */
+const statusFailure = (error: unknown): ExifToolStatus => ({
+  isOverride: false,
+  path: null,
+  resolvedPath: null,
+  version: null,
+  minimumVersion: '',
+  error: toAppError(error),
+});
+
 type LogEntry = { id: number; level: 'info' | 'warning' | 'error'; message: string };
 
 export function App() {
@@ -92,10 +102,16 @@ export function App() {
             { id: nextLogId.current++, level: 'warning', message: warning },
           ]);
       })
-      .catch(() => undefined);
+      .catch((error: unknown) => {
+        const { kind, message } = toAppError(error);
+        setLog((entries) => [
+          ...entries,
+          { id: nextLogId.current++, level: 'error', message: `App info: ${kind}: ${message}` },
+        ]);
+      });
     void exiftoolStatus()
       .then(setDependency)
-      .catch(() => undefined);
+      .catch((error: unknown) => setDependency(statusFailure(error)));
   }, []);
 
   const update = (change: Partial<Layout>) => setLayout((current) => ({ ...current, ...change }));
@@ -131,7 +147,7 @@ export function App() {
       // A read can fail because ExifTool went missing; refresh the dependency banner.
       void exiftoolStatus()
         .then(setDependency)
-        .catch(() => undefined);
+        .catch((error: unknown) => setDependency(statusFailure(error)));
       addLog('error', `${appError.kind}: ${appError.message}`);
     } finally {
       setReading(false);

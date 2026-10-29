@@ -73,6 +73,7 @@ impl From<ReadError> for AppError {
         let kind = match error {
             ReadError::InvalidInput(_) => ErrorKind::InvalidInput,
             ReadError::ProcessFailure(_) => ErrorKind::ProcessFailure,
+            ReadError::Cancelled => ErrorKind::Cancelled,
         };
         Self::new(kind, error.to_string())
     }

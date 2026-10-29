@@ -20,3 +20,6 @@ tauri-plugin-dialog = "2"
 
 [dev-dependencies]
 ts-rs = { version = "12.0.1", features = ["serde-json-impl", "no-serde-warnings"] }
+
+[target."cfg(unix)".dependencies]
+libc = "0.2"

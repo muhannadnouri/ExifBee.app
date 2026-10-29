@@ -1,15 +1,19 @@
-//! The single way ExifBee runs an executable: validated path, separate OS arguments, no shell
-//! (SPEC §4.4, SEC-002), with a timeout and an output limit.
+//! The isolated executor (S2-T03, SEC-007): the single way ExifBee runs an executable. Validated
+//! path, separate OS arguments, no shell (SEC-002); bounded time and output; cancellable; and it
+//! never leaves the child, its descendants, or a zombie behind.
 
 use std::ffi::OsStr;
 use std::fmt;
 use std::io::Read;
 use std::path::Path;
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver};
 use std::sync::Arc;
-use std::thread::{self, JoinHandle};
+use std::thread;
 use std::time::{Duration, Instant};
+
+const POLL: Duration = Duration::from_millis(10);
 
 #[derive(Debug)]
 pub struct Output {
@@ -20,9 +24,12 @@ pub struct Output {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RunError {
+    /// The program could not be started (missing, not executable) or waiting on it failed.
     Launch(String),
     Timeout(Duration),
     OutputTooLarge(usize),
+    /// The caller's [`CancelToken`] was triggered, before or during the run.
+    Cancelled,
 }
 
 impl fmt::Display for RunError {
@@ -31,81 +38,118 @@ impl fmt::Display for RunError {
             Self::Launch(message) => write!(f, "could not start: {message}"),
             Self::Timeout(after) => write!(f, "did not finish within {} s", after.as_secs_f32()),
             Self::OutputTooLarge(limit) => write!(f, "printed more than {limit} bytes"),
+            Self::Cancelled => write!(f, "was cancelled"),
         }
     }
 }
 
-/// Runs `program args...` and returns its exit status and raw output. The only process runner in
-/// ExifBee (DEC-015); both the `-ver` probe and metadata reads use it.
+/// Lets another thread stop a run: cheap to clone, shared by clones. A job (S5) hands one to each
+/// ExifTool invocation and calls [`CancelToken::cancel`] when the user presses Cancel; the
+/// executor notices within one poll interval (10 ms) and terminates the process group.
+#[derive(Debug, Clone, Default)]
+pub struct CancelToken(Arc<AtomicBool>);
+
+impl CancelToken {
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
+/// Runs `program args...` to completion within `timeout` and `max_output` bytes per stream,
+/// unless `cancel` fires first. Returns exit status and raw output; a non-zero exit is *not* an
+/// error here (ExifTool exits 1 with valid JSON for per-file errors), callers interpret it.
 ///
-/// Flow: spawn with stdin closed → one thread drains stdout, one drains stderr (so a child that
-/// writes a lot never blocks on a full pipe) → poll `try_wait` every 10 ms → on exit, join the
-/// threads and return.
+/// Flow:
+/// 1. Cancelled already → `Cancelled` without spawning (cancel-before-start, FR-018).
+/// 2. Spawn with stdin closed, in its **own process group** (Unix), so killing the group also
+///    kills anything the child started.
+/// 3. One thread drains stdout and one stderr, so a chatty child never blocks on a full pipe;
+///    reading `max_output + 1` bytes flags overflow.
+/// 4. Poll every 10 ms for cancel / overflow / timeout / exit. Exit is detected *without reaping*
+///    the child (`waitid` + `WNOWAIT`).
+/// 5. Exit or failure: kill the whole group, then reap the child. Because the child is still an
+///    unreaped zombie when the group is signalled, its pid (= the group id) cannot have been
+///    reused, so the kill can never hit an unrelated process. Leftover background descendants are
+///    removed even when the child itself exited normally.
+/// 6. Collect stream output with a deadline, so a process that escaped the group (`setsid`)
+///    while holding a pipe cannot hang the caller.
 ///
-/// Limits: the child is killed when `timeout` passes (`Timeout`) or either stream exceeds
-/// `max_output` bytes (`OutputTooLarge`); spawn failures are `Launch`.
+/// Cleanup is also guaranteed on unwinding: a drop guard kills and reaps the child.
 ///
-/// Gotchas:
-/// - Arguments are separate OS strings; nothing is ever interpreted by a shell (SEC-002).
-/// - A non-zero exit is *not* an error here: ExifTool exits 1 with valid JSON for per-file
-///   errors, so callers decide what the status means.
-/// - On kill, reader threads are left to finish on their own: a grandchild (e.g. under dash
-///   `/bin/sh`) can hold the pipes open, and waiting for it would turn a timeout into a hang.
+/// Not applied: OS memory/CPU limits (`setrlimit`). ExifTool's memory needs scale with the file,
+/// so a hard cap would cause false failures; output caps and batching bound memory instead
+/// (NFR-002). Windows (S8) only kills the direct child until job objects are added.
 ///
-/// Example: `run(Path::new("/usr/bin/exiftool"), ["-ver"], Duration::from_secs(10), 64 * 1024)`.
-// shortcut: no cancellation token, streaming events or process-group kill (a grandchild that
-// keeps the pipes open is abandoned, not killed); S2-T03 builds the full isolated executor.
+/// Example: `run(exiftool, ["-ver"], Duration::from_secs(10), 64 * 1024, &CancelToken::default())`.
 pub fn run<I, S>(
     program: &Path,
     args: I,
     timeout: Duration,
     max_output: usize,
+    cancel: &CancelToken,
 ) -> Result<Output, RunError>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    let mut child = Command::new(program)
+    if cancel.is_cancelled() {
+        return Err(RunError::Cancelled);
+    }
+    let mut command = Command::new(program);
+    command
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| RunError::Launch(error.to_string()))?;
+        .stderr(Stdio::piped());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    let mut child = Guard(Some(
+        command
+            .spawn()
+            .map_err(|error| RunError::Launch(error.to_string()))?,
+    ));
 
     let overflow = Arc::new(AtomicBool::new(false));
-    let stdout = collect(child.stdout.take(), max_output, &overflow);
-    let stderr = collect(child.stderr.take(), max_output, &overflow);
+    let stdout = collect(child.get().stdout.take(), max_output, &overflow);
+    let stderr = collect(child.get().stderr.take(), max_output, &overflow);
 
     let started = Instant::now();
-    let status = loop {
-        let failure = if overflow.load(Ordering::Relaxed) {
-            Some(RunError::OutputTooLarge(max_output))
-        } else if started.elapsed() >= timeout {
-            Some(RunError::Timeout(timeout))
-        } else {
-            None
-        };
-        if let Some(error) = failure {
-            let _ = child.kill();
-            let _ = child.wait();
-            // Reader threads are detached: they end when the last pipe writer exits.
-            return Err(error);
+    let outcome = loop {
+        if cancel.is_cancelled() {
+            break Err(RunError::Cancelled);
         }
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) => thread::sleep(Duration::from_millis(10)),
-            Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(RunError::Launch(error.to_string()));
-            }
+        if overflow.load(Ordering::SeqCst) {
+            break Err(RunError::OutputTooLarge(max_output));
+        }
+        if started.elapsed() >= timeout {
+            break Err(RunError::Timeout(timeout));
+        }
+        match has_exited(child.get()) {
+            Ok(true) => break Ok(()),
+            Ok(false) => thread::sleep(POLL),
+            Err(error) => break Err(RunError::Launch(error)),
         }
     };
 
-    let stdout = stdout.join().unwrap_or_default();
-    let stderr = stderr.join().unwrap_or_default();
-    if overflow.load(Ordering::Relaxed) {
+    let status = child.finish();
+    outcome?;
+    let status = status.map_err(|error| RunError::Launch(error.to_string()))?;
+    // Every writer is gone after the group kill; the grace period only matters if a descendant
+    // escaped the group while holding a pipe.
+    let grace = timeout
+        .saturating_sub(started.elapsed())
+        .max(Duration::from_secs(1));
+    let deadline = Instant::now() + grace;
+    let stdout = receive(&stdout, deadline).ok_or(RunError::Timeout(timeout))?;
+    let stderr = receive(&stderr, deadline).ok_or(RunError::Timeout(timeout))?;
+    if overflow.load(Ordering::SeqCst) {
         return Err(RunError::OutputTooLarge(max_output));
     }
     Ok(Output {
@@ -115,24 +159,108 @@ where
     })
 }
 
-/// Drains one pipe on its own thread, keeping at most `max_output` bytes. Reading
-/// `max_output + 1` bytes is how overflow is detected; the shared flag lets [`run`] kill the
-/// child promptly instead of waiting for it to finish writing.
+/// Owns the child until it is reaped; dropping it (normally or while unwinding) terminates the
+/// process group and reaps, so no path leaves a running process or a zombie.
+struct Guard(Option<Child>);
+
+impl Guard {
+    fn get(&mut self) -> &mut Child {
+        self.0.as_mut().expect("child already reaped")
+    }
+
+    /// Kills the process group (and the child), then reaps the child and returns its status.
+    fn finish(&mut self) -> std::io::Result<ExitStatus> {
+        let mut child = self.0.take().expect("child already reaped");
+        kill_group(&mut child);
+        child.wait()
+    }
+}
+
+impl Drop for Guard {
+    fn drop(&mut self) {
+        if self.0.is_some() {
+            let _ = self.finish();
+        }
+    }
+}
+
+/// Signals the child's whole process group. Safe because it runs before the child is reaped.
+#[cfg(unix)]
+fn kill_group(child: &mut Child) {
+    let Ok(group) = libc::pid_t::try_from(child.id()) else {
+        let _ = child.kill();
+        return;
+    };
+    // SAFETY: `kill` takes plain integers; a negative pid addresses the group the child leads
+    // (spawned with `process_group(0)`). ESRCH (nothing left) is fine and ignored.
+    unsafe {
+        libc::kill(-group, libc::SIGKILL);
+    }
+}
+
+#[cfg(not(unix))]
+fn kill_group(child: &mut Child) {
+    let _ = child.kill();
+}
+
+/// Whether the child has exited, without reaping it (so its pid stays reserved).
+#[cfg(unix)]
+fn has_exited(child: &mut Child) -> Result<bool, String> {
+    let pid = libc::id_t::from(child.id());
+    // SAFETY: a zeroed `siginfo_t` is a valid out-parameter for `waitid`.
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    // SAFETY: valid pointer to `info`; WNOHANG never blocks, WNOWAIT leaves the child waitable.
+    let result = unsafe {
+        libc::waitid(
+            libc::P_PID,
+            pid,
+            &mut info,
+            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+        )
+    };
+    if result != 0 {
+        return Err(std::io::Error::last_os_error().to_string());
+    }
+    // SAFETY: after a successful `waitid`, `si_pid` is initialized (0 means still running).
+    Ok(unsafe { info.si_pid() } != 0)
+}
+
+#[cfg(not(unix))]
+fn has_exited(child: &mut Child) -> Result<bool, String> {
+    // shortcut: try_wait reaps, so the group-before-reap ordering does not apply off Unix;
+    // S8 replaces this with a Windows job object that also covers descendants.
+    child
+        .try_wait()
+        .map(|status| status.is_some())
+        .map_err(|error| error.to_string())
+}
+
+/// Drains one pipe on its own thread, keeping at most `max_output` bytes, and sends the bytes
+/// when the pipe closes. Reading `max_output + 1` bytes is how overflow is detected; the shared
+/// flag lets [`run`] stop the child promptly instead of waiting for it to finish writing.
 fn collect(
     pipe: Option<impl Read + Send + 'static>,
     max_output: usize,
     overflow: &Arc<AtomicBool>,
-) -> JoinHandle<Vec<u8>> {
+) -> Receiver<Vec<u8>> {
     let overflow = Arc::clone(overflow);
+    let (send, receive) = mpsc::channel();
     thread::spawn(move || {
         let mut bytes = Vec::new();
         if let Some(pipe) = pipe {
             let _ = pipe.take(max_output as u64 + 1).read_to_end(&mut bytes);
         }
         if bytes.len() > max_output {
-            overflow.store(true, Ordering::Relaxed);
+            overflow.store(true, Ordering::SeqCst);
             bytes.truncate(max_output);
         }
-        bytes
-    })
+        let _ = send.send(bytes);
+    });
+    receive
+}
+
+fn receive(stream: &Receiver<Vec<u8>>, deadline: Instant) -> Option<Vec<u8>> {
+    stream
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        .ok()
 }
