@@ -16,3 +16,4 @@ src-tauri/gen/
 /.zshrc
 /.claude/
 /.memsearch/
+/coverage

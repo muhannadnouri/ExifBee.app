@@ -1,6 +1,6 @@
 ---
 title: ExifBee — Software Design & Delivery Specification
-spec_version: 1.0.3
+spec_version: 1.0.4
 status: approved-baseline-for-implementation
 created: 2026-10-28
 product: ExifBee
@@ -89,7 +89,7 @@ For every task:
 
 ### 0.5 Versioning and change control
 
-- This is **SDD v1.0.3** (v1.0.0 was the initial implementation baseline). Product release versioning is independent (start application releases at `0.x`).
+- This is **SDD v1.0.4** (v1.0.0 was the initial implementation baseline). Product release versioning is independent (start application releases at `0.x`).
 - Spec `PATCH`: clarifications or test links without behavior change. `MINOR`: additive requirements/tasks. `MAJOR`: materially changed behavior, security guarantees, scope, or compatibility.
 - Record important decisions in the **Decision log (§18)** with date, ID, rationale, tradeoff, and replacement when superseded; don't introduce separate ADR Markdown files.
 - CI validates frontmatter, unique IDs, valid status syntax, task/gate references, and test references. A machine report is generated on demand rather than maintained manually.
@@ -255,7 +255,7 @@ For every task:
 6. Windows prefer bundled path under Tauri resource resolution; keep executable and `exiftool_files` together. Packaging is verified by launching the **installed app**, not merely dev mode.
 7. Create `ExifToolCapabilitySnapshot` keyed by version and path identity, using `-listf`, `-listwf`, `-listw`, `-listg*`, `-listx` as needed (large listings parsed off main thread). Refresh after path/version change.
 8. Define a tested minimum ExifTool version **during S0** from feature compatibility trials; do not invent an arbitrary minimum in v1.0.0 baseline. Older versions may run in degraded, clearly documented read-only mode only if tests prove this safe.
-   - **Recorded by S0-T03 (2026-10-28): tested version and provisional minimum = ExifTool 13.55** (Arch Linux `perl-image-exiftool` 13.55-1, installed at `/usr/bin/vendor_perl/exiftool`, which is not on a desktop launcher's default PATH and is therefore a probed known location). It is the only version exercised so far, so the resolver rejects older versions with an explicit "older than the minimum tested version" error. Many distribution packages (e.g. current Ubuntu LTS 12.x) are older: S0-T05 CI must either install ExifTool ≥ 13.55 or produce test evidence that justifies lowering this floor here. Never lower it without that evidence.
+   - **Recorded by S0-T03 (2026-10-28): tested version and provisional minimum = ExifTool 13.55** (Arch Linux `perl-image-exiftool` 13.55-1, installed at `/usr/bin/vendor_perl/exiftool`, which is not on a desktop launcher's default PATH and is therefore a probed known location). It is the only version exercised so far, so the resolver rejects older versions with an explicit "older than the minimum tested version" error. Many distribution packages (e.g. current Ubuntu LTS 12.x) are older: S0-T05 CI must either install ExifTool ≥ 13.55 or produce test evidence that justifies lowering this floor here. Never lower it without that evidence. S0-T05 meets this with DEC-013 (CI installs pacman ExifTool 13.55 from a pinned Arch Linux Archive snapshot).
    - `-ver` output is accepted only as a bare `major.minor` version (two-digit minor). Anything else, including ExifTool's own `[Warning: Library version is …]` script/library mismatch suffix, is rejected as a broken installation and its output is shown.
    - A user override is used exclusively: if it fails validation the error is reported, never silently replaced by an auto-detected executable. Relative overrides and relative PATH entries are rejected.
 
@@ -614,7 +614,7 @@ Record hardware/OS, ExifTool version, cold/warm cache, file sizes, throughput, p
 - [x] **S0-T02 — Install the single-spec workflow.** *(2026-10-28, `feature/linux-mvp`: maintainer approved; spec kept at `docs/SPEC.md` per DEC-012; recorded exception — preflight CI run deferred by the maintainer.)* Save this file as `SPEC.md` without splitting it, implement `scripts/check-spec-traceability` with duplicate/unknown ID detection, status syntax, and completed-task evidence checking; add preflight CI job. **Acceptance:** Intentional malformed IDs, stale test annotations, and checked automatable tasks lacking traceable test evidence make CI fail; correct baseline passes without counting TODO requirements as missing. **Evidence:** `OPS-002`, `TST-008` test harness fixtures.
 - [x] **S0-T03 — Prove ExifTool resolver on Linux.** *(2026-10-28, `feature/linux-mvp`: maintainer approved; tested with ExifTool 13.55 on Arch Linux, provisional minimum recorded in §3.2; recorded exception — CI run deferred by the maintainer.)* Write a standalone Rust adapter spike that resolves system `exiftool`, runs `-ver`, captures stdout/stderr/status and handles nonexistent executable and version mismatch. Document actual tested version/minimum compatibility in this file after evidence. **Acceptance:** 3 scenarios (installed/missing/invalid binary) have integration tests; no shell calls. **Evidence:** `FR-001`, `SEC-002`.
 - [x] **S0-T04 — Establish legal and fixture baseline.** *(2026-10-28, `feature/linux-mvp`: maintainer approved; fixtures regenerate byte-identically and real ExifTool 13.55 reads their expected values; Windows notice review stays open in `THIRD_PARTY_NOTICES` until S8-T05; recorded exception — CI run deferred by the maintainer.)* Add MIT `LICENSE`, accurate ExifTool attribution/third-party notice placeholder, synthetic/legal fixture generator and checksums; research source metadata licenses. **Acceptance:** no binary ExifTool/Perl in git; fixtures may be redistributed; documented Windows notice review is open until its stage; fixture generation is repeatable. **Evidence:** `OPS-003`, `PKG-004` early audit.
-- [ ] **S0-T05 — Add Linux CI quality gates.** GitHub Actions or equivalent for JS/Rust lint/format/build, real Linux ExifTool installed from package manager, unit/integration and coverage artifact, dependency audit and traceability check. **Acceptance:** Clean CI passes without local mutable dependencies; intentionally failing integration and safety test correctly blocks PR. **Evidence:** `OPS-001`, `TST-001`, `TST-002`.
+- [ ] ⏳ IN PROGRESS (Claude, feature/linux-mvp) **S0-T05 — Add Linux CI quality gates.** GitHub Actions or equivalent for JS/Rust lint/format/build, real Linux ExifTool installed from package manager, unit/integration and coverage artifact, dependency audit and traceability check. **Acceptance:** Clean CI passes without local mutable dependencies; intentionally failing integration and safety test correctly blocks PR. **Evidence:** `OPS-001`, `TST-001`, `TST-002`.
 - [ ] **S0-T06 — Architectural decision spike.** Validate Tauri IPC command pattern and native-dialog selection, real path handling and installed ExifTool behavior on a test JPG and non-image fixture. Commit thin prototype or replace it with clean production adapter; do not retain two competing execution paths. **Acceptance:** Demonstrate `read one mixed-format file` through Rust and return structured error; record any discovery that changes this spec. **Evidence:** `FR-003`, `FR-005`, `NFR-005`.
 
 **Gate `G0` — S0 accepted when:** All S0 tasks done; reproducible Linux startup; ExifTool system invocation proves reads on image and non-image fixtures; CI and traceability checks actually block failing changes; baseline tooling/fixture licenses reviewed. **No production feature claims yet.**
@@ -1173,6 +1173,7 @@ An AI agent may mark a stage complete only after **all** stage task criteria, te
 | DEC-010 | 2026-10-28 | Advanced ExifTool arguments, **not** general shell | Preserve broad capability without arbitrary command execution | Active |
 | DEC-011 | 2026-10-28 | MIT ExifBee source with separate third-party notices | Keep project permissive without relicensing ExifTool | Active |
 | DEC-012 | 2026-10-28 | Canonical SDD lives at `docs/SPEC.md` (S0-T02 and §4.2 originally named root `SPEC.md`) | Maintainer committed it under `docs/`; one canonical file is what matters, not its folder | Active |
+| DEC-013 | 2026-10-28 | Linux CI quality job runs in an `archlinux:base` container whose pacman mirror is pinned to one Arch Linux Archive date (`ARCH_SNAPSHOT` in `.github/workflows/ci.yml`); Rust toolchain pinned the same way (`RUST_TOOLCHAIN`) | Ubuntu runner packages are older than the tested ExifTool minimum (Ubuntu 24.04 ships 12.76), and S0-T05 requires ExifTool from a package manager; a dated snapshot makes every system package, including ExifTool and WebKitGTK, a fixed version, so CI has no mutable dependencies. Raise the snapshot date deliberately in a reviewed change | Active |
 
 **To record a future decision:** add a row with a new `DEC-###` ID, date, adopted choice, tradeoff and supersession reference; edit relevant requirement, task and tests together. Do not erase a superseded decision or create a separate `.md` ADR file.
 
@@ -1204,4 +1205,4 @@ Use official upstream sources when implementing or updating behaviors. APIs and 
 
 **A successful SDD process is not the number of checked boxes.** It is an auditable invariant: requirements remain stable and intentional, tests assert user-visible behavior, CI verifies those tests, release gates reflect the platform actually exercised, and documentation stays small enough to remain accurate.
 
-**End of ExifBee SDD v1.0.3.**
+**End of ExifBee SDD v1.0.4.**

@@ -12,13 +12,14 @@ Status: early development, Linux first. The product and architecture specificati
 | npm              | 11.19.0 (ships with Node 24.21.0)                                                                                                              |
 | Rust             | 1.90 or newer (`rust-version` in `src-tauri/Cargo.toml`)                                                                                       |
 | System libraries | WebKitGTK 4.1 and GTK 3 development packages, as listed in the [Tauri v2 Linux prerequisites](https://v2.tauri.app/start/prerequisites/#linux) |
+| ExifTool         | 13.55 or newer from your package manager; integration tests use it (set `EXIFTOOL` to an absolute path to pick one)                            |
 
 ```bash
 npm ci
 npm run dev
 ```
 
-Other scripts: `npm run build`, `npm run fixtures` (regenerate `tests/fixtures`), `npm test`, `npm run lint`, `npm run typecheck`, `npm run format`, `npm run format:check`.
+Other scripts: `npm run build`, `npm run fixtures` (regenerate `tests/fixtures`), `npm test` (`test:unit` + `test:integration`), `npm run coverage` (needs `cargo-llvm-cov`), `npm run audit:deps` (needs `cargo-audit`), `npm run lint`, `npm run typecheck`, `npm run format`, `npm run format:check`.
 
 ## License
 
