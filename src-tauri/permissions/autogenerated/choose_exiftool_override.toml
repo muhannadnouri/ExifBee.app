@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-choose-exiftool-override"
+description = "Enables the choose_exiftool_override command without any pre-configured scope."
+commands.allow = ["choose_exiftool_override"]
+
+[[permission]]
+identifier = "deny-choose-exiftool-override"
+description = "Denies the choose_exiftool_override command without any pre-configured scope."
+commands.deny = ["choose_exiftool_override"]

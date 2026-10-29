@@ -103,3 +103,19 @@ fn errors_serialize_as_kind_and_message_for_ipc() {
         json!({ "kind": "InvalidInput", "message": "not a readable file: /x" })
     );
 }
+
+// @req SEC-003
+#[test]
+fn hostile_markup_in_metadata_arrives_as_plain_text() {
+    let read = read_metadata(&system_exiftool(), &fixture("hostile.xmp")).unwrap();
+    // ExifTool decodes the XML escapes, so the renderer receives live markup as a string; it must
+    // only ever be rendered as text (React text nodes, CSP blocks inline scripts as a backstop).
+    assert_eq!(
+        read.tags["XMP-dc:Title"],
+        json!(r#"<img src=x onerror="window.__pwned=1"><script>window.__pwned=2</script>"#)
+    );
+    assert_eq!(
+        read.tags["XMP-dc:Description"],
+        json!(r#""><svg onload="window.__pwned=3"></svg>"#)
+    );
+}

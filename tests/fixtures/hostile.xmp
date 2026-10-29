@@ -1,0 +1,8 @@
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/">
+   <dc:title><rdf:Alt><rdf:li xml:lang="x-default">&lt;img src=x onerror=&quot;window.__pwned=1&quot;&gt;&lt;script&gt;window.__pwned=2&lt;/script&gt;</rdf:li></rdf:Alt></dc:title>
+   <dc:description><rdf:Alt><rdf:li xml:lang="x-default">&quot;&gt;&lt;svg onload=&quot;window.__pwned=3&quot;&gt;&lt;/svg&gt;</rdf:li></rdf:Alt></dc:description>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>

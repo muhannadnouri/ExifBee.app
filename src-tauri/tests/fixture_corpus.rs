@@ -58,6 +58,14 @@ const EXPECTED: &[(&str, &[&str])] = &[
         "truncated.jpg",
         &["-File:FileType=JPEG", "-ExifTool:Warning=JPEG format error"],
     ),
+    (
+        "hostile.xmp",
+        &[
+            "-File:FileType=XMP",
+            r#"-XMP-dc:Title=<img src=x onerror="window.__pwned=1"><script>window.__pwned=2</script>"#,
+            r#"-XMP-dc:Description="><svg onload="window.__pwned=3"></svg>"#,
+        ],
+    ),
 ];
 
 fn fixture_dir() -> PathBuf {

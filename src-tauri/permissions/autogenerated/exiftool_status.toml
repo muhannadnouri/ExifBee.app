@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-exiftool-status"
+description = "Enables the exiftool_status command without any pre-configured scope."
+commands.allow = ["exiftool_status"]
+
+[[permission]]
+identifier = "deny-exiftool-status"
+description = "Denies the exiftool_status command without any pre-configured scope."
+commands.deny = ["exiftool_status"]

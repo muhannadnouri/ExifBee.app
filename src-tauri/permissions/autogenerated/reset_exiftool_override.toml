@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-reset-exiftool-override"
+description = "Enables the reset_exiftool_override command without any pre-configured scope."
+commands.allow = ["reset_exiftool_override"]
+
+[[permission]]
+identifier = "deny-reset-exiftool-override"
+description = "Denies the reset_exiftool_override command without any pre-configured scope."
+commands.deny = ["reset_exiftool_override"]

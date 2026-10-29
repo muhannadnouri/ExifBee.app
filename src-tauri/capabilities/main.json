@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "The only window: ExifBee's own commands and nothing else. No core, shell, filesystem or dialog plugin permissions; Rust opens dialogs and runs ExifTool itself (SEC-008).",
+  "windows": ["main"],
+  "permissions": [
+    "allow-app-info",
+    "allow-exiftool-status",
+    "allow-choose-exiftool-override",
+    "allow-reset-exiftool-override",
+    "allow-read-selected-file"
+  ]
+}

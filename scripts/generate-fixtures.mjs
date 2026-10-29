@@ -184,6 +184,24 @@ function zip() {
   return Buffer.concat([local, central, end]);
 }
 
+/** Markup an attacker could plant in metadata; ExifTool returns it decoded (SEC-003, S1-T06). */
+export const HOSTILE_TITLE =
+  '<img src=x onerror="window.__pwned=1"><script>window.__pwned=2</script>';
+export const HOSTILE_DESCRIPTION = '"><svg onload="window.__pwned=3"></svg>';
+
+const xmlEscape = (text) =>
+  text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+const HOSTILE_XMP = `<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/">
+   <dc:title><rdf:Alt><rdf:li xml:lang="x-default">${xmlEscape(HOSTILE_TITLE)}</rdf:li></rdf:Alt></dc:title>
+   <dc:description><rdf:Alt><rdf:li xml:lang="x-default">${xmlEscape(HOSTILE_DESCRIPTION)}</rdf:li></rdf:Alt></dc:description>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>
+`;
+
 /** @returns {{ name: string, bytes: Buffer }[]} the corpus, in a stable order */
 export function fixtures() {
   const fullJpeg = jpeg();
@@ -197,6 +215,7 @@ export function fixtures() {
     { name: 'plain.txt', bytes: Buffer.from('ExifBee plain text with no embedded metadata\n') },
     { name: 'empty.bin', bytes: Buffer.alloc(0) },
     { name: 'truncated.jpg', bytes: fullJpeg.subarray(0, 64) },
+    { name: 'hostile.xmp', bytes: Buffer.from(HOSTILE_XMP, 'utf8') },
   ];
 }
 
