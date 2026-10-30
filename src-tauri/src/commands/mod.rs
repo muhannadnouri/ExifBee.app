@@ -1,13 +1,16 @@
 //! Narrow Tauri commands (SEC-008): the renderer never passes a filesystem path; Rust opens
 //! the native dialog and works only with what the user picked.
 
+use crate::adapter::exiftool::process::CancelToken;
 use crate::adapter::exiftool::read::{read_metadata, FileMetadata};
 use crate::adapter::exiftool::resolver::ExifTool;
 use crate::domain::error::{AppError, ErrorKind};
 use crate::service::dependency::{self, ExifToolStatus};
 use crate::service::files::{FileId, FileRegistry, ImportResult, RejectedPath};
+use crate::service::scan::{self, ScanOptions};
 use crate::service::settings::SettingsStore;
 use serde::Serialize;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -15,6 +18,16 @@ use tauri_plugin_dialog::{DialogExt, FilePath};
 
 pub type SettingsState = Mutex<SettingsStore>;
 pub type FilesState = Mutex<FileRegistry>;
+pub type ScansState = Mutex<Scans>;
+
+/// Folder scans of this session: the options every new scan uses (set from the UI, also used for
+/// dropped folders) and a stop switch per running scan.
+#[derive(Default)]
+pub struct Scans {
+    options: ScanOptions,
+    running: HashMap<u32, CancelToken>,
+    next: u32,
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -22,6 +35,8 @@ pub type FilesState = Mutex<FileRegistry>;
 pub struct AppInfo {
     pub version: String,
     pub settings_warning: Option<String>,
+    /// The folder scan options in force, so the UI shows exactly what a dropped folder will use.
+    pub scan_options: ScanOptions,
 }
 
 /// Unexpected failures (poisoned lock, panicked task, failed settings write) as an IPC error.
@@ -61,13 +76,18 @@ async fn blocking<T: Send + 'static>(
         .map_err(internal)?
 }
 
-/// App version for About, plus the one-time settings recovery warning from startup (shown as a
-/// banner and logged by the UI). Cheap and non-blocking, so it stays a sync command.
+/// App version for About, the one-time settings recovery warning from startup (shown as a
+/// banner and logged by the UI) and the scan options. Cheap and non-blocking, so it stays sync.
 #[tauri::command]
-pub fn app_info(app: AppHandle, state: State<'_, SettingsState>) -> Result<AppInfo, AppError> {
+pub fn app_info(
+    app: AppHandle,
+    state: State<'_, SettingsState>,
+    scans: State<'_, ScansState>,
+) -> Result<AppInfo, AppError> {
     Ok(AppInfo {
         version: app.package_info().version.to_string(),
         settings_warning: state.lock().map_err(internal)?.warning.clone(),
+        scan_options: scans.lock().map_err(internal)?.options.clone(),
     })
 }
 
@@ -152,30 +172,121 @@ fn register(app: &AppHandle, paths: Vec<PathBuf>) -> Result<ImportResult, AppErr
 /// Name of the event that carries a drop's [`ImportResult`] to the renderer.
 pub const FILES_DROPPED: &str = "files-dropped";
 
-/// Handles files dropped on the window (called from `on_window_event` in `lib.rs`, off the main
-/// thread): registers them exactly like a dialog selection and emits [`FILES_DROPPED`].
+/// Name of the event that carries each folder scan's [`scan::ScanUpdate`]s to the renderer.
+pub const SCAN_PROGRESS: &str = "scan-progress";
+
+/// Starts scanning a user-chosen folder in the background and returns its scan ID at once.
+///
+/// Flow: take the current options and a fresh stop switch under the lock → scan on the blocking
+/// pool, emitting [`SCAN_PROGRESS`] for every update → forget the stop switch when done. The
+/// folder comes only from the dialog or a drop, never from the renderer (SEC-008).
+fn start_scan(app: &AppHandle, root: PathBuf) -> Result<u32, AppError> {
+    let (scan_id, options, cancel) = {
+        let state = app.state::<ScansState>();
+        let mut scans = state.lock().map_err(internal)?;
+        scans.next += 1;
+        let cancel = CancelToken::default();
+        let scan_id = scans.next;
+        scans.running.insert(scan_id, cancel.clone());
+        (scan_id, scans.options.clone(), cancel)
+    };
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        scan::scan(
+            scan_id,
+            &root,
+            &options,
+            &cancel,
+            &app.state::<FilesState>(),
+            scan::UPDATE_INTERVAL,
+            |update| {
+                if let Err(error) = app.emit_to("main", SCAN_PROGRESS, update) {
+                    eprintln!("could not deliver scan progress to the window: {error}");
+                }
+            },
+        );
+        if let Ok(mut scans) = app.state::<ScansState>().lock() {
+            scans.running.remove(&scan_id);
+        }
+    });
+    Ok(scan_id)
+}
+
+/// Handles paths dropped on the window (called from `on_window_event` in `lib.rs`, off the main
+/// thread): folders start a scan with the current options; files are registered exactly like a
+/// dialog selection and reported through [`FILES_DROPPED`].
 ///
 /// Design: the drop is a user gesture seen by Rust, so its paths go straight into the registry and
 /// the renderer only ever receives IDs, the same as for `add_files` (SEC-008). Never fails
-/// silently: if registering fails, every path comes back rejected with the reason.
+/// silently: if registering or starting a scan fails, those paths come back rejected with the
+/// reason. A drop of only folders emits no `files-dropped`, since its scans report themselves.
 pub fn files_dropped(app: &AppHandle, paths: Vec<PathBuf>) {
-    let shown: Vec<String> = paths
-        .iter()
-        .map(|path| path.display().to_string())
-        .collect();
-    let result = register(app, paths).unwrap_or_else(|error| ImportResult {
-        rejected: shown
-            .into_iter()
+    let (folders, files): (Vec<_>, Vec<_>) = paths.into_iter().partition(|path| path.is_dir());
+    let rejected = |paths: &[PathBuf], error: &AppError| -> Vec<RejectedPath> {
+        paths
+            .iter()
             .map(|path| RejectedPath {
-                path,
+                path: path.display().to_string(),
                 reason: error.message.clone(),
             })
-            .collect(),
-        ..ImportResult::default()
-    });
+            .collect()
+    };
+    let mut result = if files.is_empty() {
+        ImportResult::default()
+    } else {
+        register(app, files.clone()).unwrap_or_else(|error| ImportResult {
+            rejected: rejected(&files, &error),
+            ..ImportResult::default()
+        })
+    };
+    for folder in folders {
+        if let Err(error) = start_scan(app, folder.clone()) {
+            result.rejected.extend(rejected(&[folder], &error));
+        }
+    }
+    if result == ImportResult::default() {
+        return;
+    }
     if let Err(error) = app.emit_to("main", FILES_DROPPED, result) {
         eprintln!("could not deliver dropped files to the window: {error}");
     }
+}
+
+/// Lets the user pick a folder and starts scanning it with the current options; `None` if
+/// cancelled. Progress and the added files arrive as [`SCAN_PROGRESS`] events.
+#[tauri::command]
+pub async fn add_folder(app: AppHandle) -> Result<Option<u32>, AppError> {
+    blocking(move || {
+        let Some(picked) = app.dialog().file().blocking_pick_folder() else {
+            return Ok(None);
+        };
+        Ok(Some(start_scan(&app, picked_path(picked)?)?))
+    })
+    .await
+}
+
+/// Asks a running scan to stop. Its final update (`Cancelled`) follows as an event, with the
+/// files found so far kept. Returns `false` if the scan had already finished.
+#[tauri::command]
+pub fn cancel_scan(scans: State<'_, ScansState>, scan_id: u32) -> Result<bool, AppError> {
+    let scans = scans.lock().map_err(internal)?;
+    Ok(scans
+        .running
+        .get(&scan_id)
+        .map(CancelToken::cancel)
+        .is_some())
+}
+
+/// Sets the options for scans started from now on (running scans keep theirs) and returns them
+/// normalized, so the UI shows exactly what is in force.
+#[tauri::command]
+pub fn set_scan_options(
+    scans: State<'_, ScansState>,
+    options: ScanOptions,
+) -> Result<ScanOptions, AppError> {
+    let mut scans = scans.lock().map_err(internal)?;
+    scans.options = options.normalized();
+    Ok(scans.options.clone())
 }
 
 /// Lets the user pick any number of files of any type and adds them to the session; `None` if

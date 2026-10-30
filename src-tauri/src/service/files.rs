@@ -60,8 +60,8 @@ impl FileRegistry {
     /// Registers user-chosen paths and reports what happened to each.
     ///
     /// Flow per path: must be absolute → resolve its canonical path (symlinks followed; failure
-    /// means missing or unreadable) → must be a regular file (folders wait for S3-T02 folder
-    /// import; FIFOs, sockets and devices are refused because reading one can block forever) →
+    /// means missing or unreadable) → must be a regular file (folders are scanned by
+    /// `service::scan` instead; FIFOs, sockets and devices are refused because reading one can block forever) →
     /// skip if its canonical path is already registered → otherwise add under a new ID.
     ///
     /// Any extension or format is accepted: what ExifTool can read is ExifTool's decision (FR-003).
@@ -88,7 +88,7 @@ impl FileRegistry {
                 continue;
             };
             if meta.is_dir() {
-                result.rejected.push(reject("folders cannot be added yet"));
+                result.rejected.push(reject("is a folder"));
                 continue;
             }
             if !meta.is_file() {

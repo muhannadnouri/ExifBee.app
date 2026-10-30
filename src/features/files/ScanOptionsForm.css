@@ -1,0 +1,13 @@
+.scan-options {
+  margin-bottom: 0.75rem;
+}
+
+.scan-options summary {
+  cursor: pointer;
+}
+
+.scan-options-fields {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.5rem 0 0 1rem;
+}

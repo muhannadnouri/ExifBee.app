@@ -1,9 +1,9 @@
 import type { ReactNode } from 'react';
 import './Notice.css';
 
-type Props = { tone: 'error' | 'warning'; children: ReactNode; actions?: ReactNode };
+type Props = { tone: 'error' | 'warning' | 'info'; children: ReactNode; actions?: ReactNode };
 
-/** Inline banner for problems the user must see; errors are announced as alerts. */
+/** Inline banner for problems and progress the user must see; errors are announced as alerts. */
 export function Notice({ tone, children, actions }: Props) {
   return (
     <div

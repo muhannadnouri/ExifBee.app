@@ -1,0 +1,11 @@
+.checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  cursor: pointer;
+}
+
+.checkbox input {
+  margin: 0.2rem 0 0;
+  accent-color: var(--accent);
+}

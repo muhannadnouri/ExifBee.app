@@ -3,13 +3,24 @@ import { act, cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { tagsOf } from '../../tests/support/tags';
-import type { ExifToolStatus, FileMetadata, ImportResult, ImportedFile } from '../lib/ipc';
+import type {
+  ExifToolStatus,
+  FileMetadata,
+  ImportResult,
+  ImportedFile,
+  ScanOptions,
+  ScanUpdate,
+} from '../lib/ipc';
 import { App, DEFAULT_LAYOUT, FILES_WIDTH, LAYOUT_KEY, loadLayout } from './App';
 
 const ipc = vi.hoisted(() => ({
   addFiles: vi.fn(),
   readFile: vi.fn(),
   onFilesDropped: vi.fn(),
+  onScanProgress: vi.fn(),
+  addFolder: vi.fn(),
+  cancelScan: vi.fn(),
+  setScanOptions: vi.fn(),
   appInfo: vi.fn(),
   exiftoolStatus: vi.fn(),
   chooseExiftoolOverride: vi.fn(),
@@ -65,13 +76,25 @@ const answerReads = (reads: FileMetadata[]) =>
   });
 const unlisten = vi.fn();
 let dropHandler: (result: ImportResult) => void = () => undefined;
+let scanHandler: (update: ScanUpdate) => void = () => undefined;
+const scanOptions: ScanOptions = {
+  recursive: true,
+  includeHidden: false,
+  followOutsideLinks: false,
+  includeExtensions: [],
+  excludeExtensions: [],
+};
 
 beforeEach(() => {
   localStorage.clear();
   Object.values(ipc).forEach((mock) => mock.mockReset());
   unlisten.mockReset();
-  ipc.appInfo.mockResolvedValue({ version: '0.1.0', settingsWarning: null });
+  ipc.appInfo.mockResolvedValue({ version: '0.1.0', settingsWarning: null, scanOptions });
   ipc.exiftoolStatus.mockResolvedValue(healthy);
+  ipc.onScanProgress.mockImplementation(async (handler: typeof scanHandler) => {
+    scanHandler = handler;
+    return unlisten;
+  });
   ipc.onFilesDropped.mockImplementation(async (handler: typeof dropHandler) => {
     dropHandler = handler;
     return unlisten;
@@ -110,7 +133,7 @@ describe('application shell', () => {
     const pane = screen.getByRole('region', { name: 'Files' });
     const files = within(pane);
     // The duplicate is not listed twice; the notice says so.
-    expect(files.getAllByRole('listitem').map((item) => item.textContent)).toEqual([
+    expect(files.getAllByRole('option').map((item) => item.textContent)).toEqual([
       'a.jpg',
       'b.pdf (error)',
     ]);
@@ -122,7 +145,7 @@ describe('application shell', () => {
       'ExifTool error: File format error',
     );
 
-    await user.click(files.getByRole('button', { name: '/photos/a.jpg' }));
+    await user.click(files.getByRole('option', { name: '/photos/a.jpg' }));
     expect(within(metadata).getByRole('table').textContent).toContain('/photos/a.jpg');
     // Hostile values render as text only.
     expect(metadata.innerHTML).not.toContain('<img');
@@ -163,7 +186,7 @@ describe('application shell', () => {
       ),
     );
     const files = within(screen.getByRole('region', { name: 'Files' }));
-    expect(files.getAllByRole('listitem').map((item) => item.textContent)).toEqual([
+    expect(files.getAllByRole('option').map((item) => item.textContent)).toEqual([
       'photo.jpg',
       'report.pdf',
       'movie.mp4',
@@ -182,7 +205,8 @@ describe('application shell', () => {
       'warning: Not added: /m/folder: folders cannot be added yet',
     );
     unmount();
-    await vi.waitFor(() => expect(unlisten).toHaveBeenCalledOnce());
+    // Both listeners (drops and scans) stop.
+    await vi.waitFor(() => expect(unlisten).toHaveBeenCalledTimes(2));
   });
 
   it('reports failed reads and imports instead of failing silently, and retries a failed read', async () => {
@@ -208,16 +232,121 @@ describe('application shell', () => {
       'ExifTool was not found',
     );
     const files = within(screen.getByRole('region', { name: 'Files' }));
-    expect(files.getByRole('button', { name: '/a.jpg (error)' })).toBeTruthy();
+    expect(files.getByRole('option', { name: '/a.jpg (error)' })).toBeTruthy();
 
     // After fixing ExifTool, selecting the file again reads it again.
     answerReads([file('/a.jpg')]);
-    await user.click(files.getByRole('button', { name: '/a.jpg (error)' }));
+    await user.click(files.getByRole('option', { name: '/a.jpg (error)' }));
     await within(metadata).findByRole('table');
     expect(within(metadata).queryByRole('alert')).toBeNull();
 
     await user.click(screen.getByRole('button', { name: 'Add files…' }));
     expect(files.getByRole('alert').textContent).toContain('registry lock poisoned');
+  });
+});
+
+// @req FR-004, FR-021, NFR-001
+describe('folder scans', () => {
+  const scan = (change: Partial<ScanUpdate>): ScanUpdate => ({
+    scanId: 3,
+    root: '/photos',
+    state: 'Running',
+    added: [],
+    problems: [],
+    counts: { added: 0, duplicates: 0, filtered: 0, skipped: 0 },
+    ...change,
+  });
+
+  it('lists files as a scan streams in, stops on request and reports the partial result', async () => {
+    const user = userEvent.setup();
+    ipc.addFolder.mockResolvedValue(3);
+    ipc.cancelScan.mockResolvedValue(true);
+    answerReads([file('/photos/a.jpg'), file('/photos/b.jpg')]);
+    render(<App />);
+    await vi.waitFor(() => expect(ipc.onScanProgress).toHaveBeenCalledOnce());
+
+    await user.click(screen.getByRole('button', { name: 'Add folder…' }));
+    expect(screen.getByRole('status', { name: '' }).textContent).toBe('Scanning folder…');
+    act(() =>
+      scanHandler(
+        scan({
+          added: [entry('/photos/a.jpg')],
+          problems: [{ path: '/photos/fifo', reason: 'not a regular file' }],
+          counts: { added: 1, duplicates: 0, filtered: 0, skipped: 1 },
+        }),
+      ),
+    );
+    act(() =>
+      scanHandler(
+        scan({
+          added: [entry('/photos/b.jpg')],
+          counts: { added: 2, duplicates: 0, filtered: 0, skipped: 1 },
+        }),
+      ),
+    );
+    const pane = within(screen.getByRole('region', { name: 'Files' }));
+    expect(pane.getAllByRole('option').map((item) => item.textContent)).toEqual(['a.jpg', 'b.jpg']);
+    // Only the first file found is inspected; later batches do not steal the selection.
+    await within(screen.getByRole('region', { name: 'Metadata' })).findByRole('table');
+    expect(readFile).toHaveBeenCalledExactlyOnceWith('/photos/a.jpg');
+
+    await user.click(pane.getByRole('button', { name: 'Stop' }));
+    expect(ipc.cancelScan).toHaveBeenCalledWith(3);
+    act(() =>
+      scanHandler(
+        scan({ state: 'Cancelled', counts: { added: 2, duplicates: 0, filtered: 0, skipped: 1 } }),
+      ),
+    );
+    expect(pane.getByText(/stopped before finishing/).textContent).toBe(
+      'Scan of /photos stopped before finishing: 2 added, 1 skipped so far. The Log lists each skipped item.',
+    );
+
+    await user.click(screen.getByRole('button', { name: /Log/ }));
+    expect(
+      within(screen.getByRole('log'))
+        .getAllByRole('listitem')
+        .map((item) => item.textContent)
+        .slice(0, 2),
+    ).toEqual([
+      'warning: Scan of /photos stopped before finishing: 2 added, 1 skipped so far.',
+      'info: Read /photos/a.jpg',
+    ]);
+    expect(screen.getByRole('log').textContent).toContain(
+      'warning: Skipped: /photos/fifo: not a regular file',
+    );
+  });
+
+  it('shows the folder options in force and keeps them when Rust refuses a change', async () => {
+    const user = userEvent.setup();
+    ipc.setScanOptions
+      .mockImplementationOnce(async (options: ScanOptions) => ({
+        ...options,
+        includeExtensions: ['jpg', 'png'],
+      }))
+      .mockRejectedValueOnce({ kind: 'Internal', message: 'lock poisoned' });
+    render(<App />);
+    const pane = within(screen.getByRole('region', { name: 'Files' }));
+    expect((await pane.findByText(/^Folder options/)).textContent).toBe(
+      'Folder options (with subfolders · no hidden files · links outside not followed)',
+    );
+
+    await user.click(pane.getByText(/^Folder options/));
+    const only = pane.getByRole('textbox', { name: 'Only these extensions (empty = all)' });
+    await user.type(only, '.JPG png');
+    await user.tab();
+    expect(ipc.setScanOptions).toHaveBeenCalledWith({
+      ...scanOptions,
+      includeExtensions: ['.JPG', 'png'],
+    });
+    // The form shows what Rust normalized, not what was typed.
+    expect((only as HTMLInputElement).value).toBe('jpg, png');
+
+    await user.click(pane.getByRole('checkbox', { name: 'Include subfolders' }));
+    await user.click(screen.getByRole('button', { name: /Log/ }));
+    await within(screen.getByRole('log')).findByText(/Folder options were not changed: Internal/);
+    expect(
+      (pane.getByRole('checkbox', { name: 'Include subfolders' }) as HTMLInputElement).checked,
+    ).toBe(true);
   });
 });
 
@@ -288,10 +417,42 @@ describe('keyboard navigation and focus', () => {
     await user.click(logToggle);
     expect(document.activeElement).toBe(logToggle);
 
-    const first = screen.getByRole('button', { name: '/a.jpg' });
+    // Clicking a row focuses the list (one Tab stop) and selects that row.
+    const list = screen.getByRole('listbox', { name: 'Files' });
+    const first = within(list).getByRole('option', { name: '/a.jpg' });
     await user.click(first);
-    expect(document.activeElement).toBe(first);
-    expect(first.getAttribute('aria-current')).toBe('true');
+    expect(document.activeElement).toBe(list);
+    expect(first.getAttribute('aria-selected')).toBe('true');
+    expect(list.getAttribute('aria-activedescendant')).toBe(first.id);
+  });
+
+  it('moves through the file list with the keyboard and reads only where the selection rests', async () => {
+    const user = userEvent.setup();
+    // jsdom has no layout or scrolling, so all 30 rows fit the drawn window; scale is in scan.e2e.ts.
+    const paths = Array.from({ length: 30 }, (_, i) => `/f/${String(i).padStart(2, '0')}.jpg`);
+    addFiles.mockResolvedValueOnce(imported(paths));
+    answerReads(paths.map((path) => file(path)));
+    render(<App />);
+    await user.click(screen.getByRole('button', { name: 'Add files…' }));
+    const list = screen.getByRole('listbox', { name: 'Files' });
+    await within(screen.getByRole('region', { name: 'Metadata' })).findByRole('table');
+    expect(readFile).toHaveBeenCalledTimes(1);
+
+    list.focus();
+    await user.keyboard('{ArrowDown}{ArrowDown}{ArrowDown}');
+    const selected = () => list.querySelector('[aria-selected="true"]')?.getAttribute('aria-label');
+    expect(selected()).toBe('/f/03.jpg');
+    await user.keyboard('{End}');
+    expect(selected()).toBe('/f/29.jpg');
+    // Every row reports its place in the whole list, rendered or not.
+    expect(list.querySelector('[aria-selected="true"]')?.getAttribute('aria-posinset')).toBe('30');
+    expect(list.querySelector('[role="option"]')?.getAttribute('aria-setsize')).toBe('30');
+    await user.keyboard('{Home}');
+    expect(selected()).toBe('/f/00.jpg');
+    // Passing over 03 and 29 started no read; resting on a file reads it.
+    await user.keyboard('{ArrowDown}');
+    await vi.waitFor(() => expect(readFile).toHaveBeenLastCalledWith('/f/01.jpg'));
+    expect(readFile).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -322,6 +483,7 @@ describe('settings and ExifTool dependency', () => {
     ipc.appInfo.mockResolvedValue({
       version: '0.1.0',
       settingsWarning: 'Settings could not be used: not valid JSON. Defaults are in use.',
+      scanOptions,
     });
     render(<App />);
 

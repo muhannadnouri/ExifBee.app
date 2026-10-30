@@ -1,7 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
-import { dropFiles, mockIpc, savedTheme } from './mockIpc';
+import { dropFiles, mockIpc, savedTheme, scanUpdate } from './mockIpc';
 
 // WCAG 2.2 A/AA rules, checked in a real browser so contrast and layout rules apply.
 const audit = async (page: Page) => {
@@ -28,7 +28,7 @@ for (const mode of ['light', 'dark'] as const) {
       expect(await audit(page)).toEqual([]);
     });
 
-    test('populated workbench with errors, warnings, a skip notice and open drawers has no violations', async ({
+    test('populated workbench with errors, warnings, skip and scan notices, folder options and open drawers has no violations', async ({
       page,
     }) => {
       await page.goto('/');
@@ -37,6 +37,16 @@ for (const mode of ['light', 'dark'] as const) {
       await add.click();
       await dropFiles(page, [], ['/home/user/Pictures/IMG_0042.jpg']);
       await expect(page.getByRole('button', { name: 'Dismiss' })).toBeVisible();
+      await page.getByText('Folder options').click();
+      await scanUpdate(page, {
+        scanId: 1,
+        root: '/home/user/Pictures',
+        state: 'Running',
+        added: [],
+        problems: [],
+        counts: { added: 120, duplicates: 2, filtered: 5, skipped: 1 },
+      });
+      await expect(page.getByRole('button', { name: 'Stop' })).toBeVisible();
       await page.getByRole('button', { name: /Actions/ }).click();
       await page.getByRole('button', { name: /Log/ }).click();
       await expect(page.getByRole('log')).toContainText('IMG_0042.jpg');

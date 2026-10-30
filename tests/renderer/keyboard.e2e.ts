@@ -26,21 +26,25 @@ test.describe('keyboard-only use', () => {
     // Focus is still on Add files; Tab on through the toolbar to the files list.
     await expect(page.getByRole('button', { name: 'Add files…' })).toBeFocused();
     for (const step of [
+      'Add folder…',
       'Shortcuts',
       'Settings',
-      'Theme',
-      '/home/user/Documents/report.pdf (error)',
+      'System', // the theme dropdown, named by its current option text here
+      'Folder options',
+      'report.pdf', // the file list: one Tab stop, named here by its rows' text
     ]) {
       await page.keyboard.press('Tab');
-      await expect(
-        page.getByRole(step === 'Theme' ? 'combobox' : 'button', { name: step }),
-      ).toBeFocused();
+      expect((await focusedName(page)).startsWith(step), step).toBe(true);
     }
-    await page.keyboard.press('Enter');
+    await expect(page.getByRole('listbox', { name: 'Files' })).toBeFocused();
+    // Arrow keys move through the list; Home selects the first file and inspects it.
+    await page.keyboard.press('Home');
+    await expect(
+      page.getByRole('option', { name: '/home/user/Documents/report.pdf (error)' }),
+    ).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('alert')).toHaveText('ExifTool error: File format error');
 
     // The metadata pane is a Tab stop, so a long tag table can be scrolled from the keyboard.
-    await page.keyboard.press('Tab');
     await page.keyboard.press('Tab');
     await page.keyboard.press('Tab');
     await expect(page.getByRole('region', { name: 'Metadata' })).toBeFocused();

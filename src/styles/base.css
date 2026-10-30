@@ -21,6 +21,7 @@ h2 {
 
 /* Form controls inherit text styles; their look lives in components/atoms. */
 button,
+input,
 select {
   font: inherit;
   color: inherit;

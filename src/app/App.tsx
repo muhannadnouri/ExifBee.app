@@ -11,7 +11,17 @@ import { SettingsDialog } from '../features/settings/SettingsDialog';
 import { ThemeSwitcher } from '../features/settings/ThemeSwitcher';
 import { ErrorNotice } from '../components/ErrorNotice';
 import { toAppError } from '../lib/errors';
-import { addFiles, appInfo, exiftoolStatus, onFilesDropped, readFile } from '../lib/ipc';
+import {
+  addFiles,
+  addFolder,
+  appInfo,
+  cancelScan,
+  exiftoolStatus,
+  onFilesDropped,
+  onScanProgress,
+  readFile,
+  setScanOptions,
+} from '../lib/ipc';
 import type {
   AppError,
   AppInfo,
@@ -19,7 +29,11 @@ import type {
   FileMetadata,
   ImportResult,
   ImportedFile,
+  ScanOptions,
+  ScanUpdate,
 } from '../lib/ipc';
+import { ScanOptionsForm } from '../features/files/ScanOptionsForm';
+import { ScanStatus, scanSummary } from '../features/files/ScanStatus';
 import './App.css';
 
 export type Layout = {
@@ -85,6 +99,11 @@ export function App() {
   const [importing, setImporting] = useState(false);
   const [importFailure, setImportFailure] = useState<AppError | null>(null);
   const [skipped, setSkipped] = useState<ImportResult | null>(null);
+  // Latest update of each scan shown in the files pane, in start order.
+  const [scans, setScans] = useState<ScanUpdate[]>([]);
+  const [scanOptions, setScanOptionsState] = useState<ScanOptions | null>(null);
+  // Scans whose Stop was clicked, so the button says "Stopping…" until the final update.
+  const [stopping, setStopping] = useState<number[]>([]);
   const [log, setLog] = useState<LogEntry[]>([]);
   const [layout, setLayout] = useState(loadLayout);
   const [status, setStatus] = useState('');
@@ -95,6 +114,7 @@ export function App() {
   const [warningDismissed, setWarningDismissed] = useState(false);
   const nextLogId = useRef(1);
   const readsInFlight = useRef(new Set<string>());
+  const keyboardRead = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     try {
@@ -109,6 +129,7 @@ export function App() {
     void appInfo()
       .then((loaded) => {
         setInfo(loaded);
+        setScanOptionsState(loaded.scanOptions);
         const warning = loaded.settingsWarning;
         if (warning)
           setLog((entries) => [
@@ -196,17 +217,86 @@ export function App() {
     }
   };
 
-  // Drops are registered in Rust; only their results arrive here (DEC-020).
+  const chooseFolder = async () => {
+    if (importing) return;
+    setImporting(true);
+    try {
+      if ((await addFolder()) !== null) setStatus('Scanning folder…');
+    } catch (error) {
+      const appError = toAppError(error);
+      setImportFailure(appError);
+      setStatus('Adding a folder failed');
+      addLog('error', `Add folder: ${appError.kind}: ${appError.message}`);
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  /** Lists a scan's new files as they arrive and logs every skipped item and the end state. */
+  const handleScan = (update: ScanUpdate) => {
+    setFiles((current) => [...current, ...update.added]);
+    setScans((current) =>
+      current.some((scan) => scan.scanId === update.scanId)
+        ? current.map((scan) => (scan.scanId === update.scanId ? update : scan))
+        : [...current, update],
+    );
+    for (const { path, reason } of update.problems)
+      addLog('warning', `Skipped: ${path}: ${reason}`);
+    if (update.state !== 'Running') {
+      const summary = scanSummary(update);
+      setStatus(summary);
+      addLog(
+        update.state === 'Complete' ? 'info' : update.state === 'Failed' ? 'error' : 'warning',
+        summary,
+      );
+    }
+    const [first] = update.added;
+    if (first && selected === null) void inspect(first);
+  };
+
+  // Acknowledged at once (NN/g: feedback within 0.1 s); the scan ends with its final update.
+  const stopScan = (scanId: number) => {
+    setStopping((current) => [...current, scanId]);
+    void cancelScan(scanId).catch((error: unknown) => {
+      setStopping((current) => current.filter((id) => id !== scanId));
+      const { kind, message } = toAppError(error);
+      addLog('error', `Stop scan: ${kind}: ${message}`);
+    });
+  };
+
+  /** Clicks inspect at once; arrowing waits until the selection rests, so holding a key does not
+   * start an ExifTool read for every file passed. */
+  const selectFile = (entry: ImportedFile, fromKeyboard: boolean) => {
+    window.clearTimeout(keyboardRead.current);
+    if (!fromKeyboard) return void inspect(entry);
+    setSelected(entry.id);
+    keyboardRead.current = window.setTimeout(() => void inspect(entry), 200);
+  };
+
+  const changeScanOptions = (next: ScanOptions) =>
+    void setScanOptions(next)
+      .then(setScanOptionsState)
+      .catch((error: unknown) => {
+        const { kind, message } = toAppError(error);
+        addLog('error', `Folder options were not changed: ${kind}: ${message}`);
+      });
+
+  // Drops and scans happen in Rust; only their results arrive here (DEC-020, DEC-021).
   const onDrop = useEffectEvent(handleImport);
+  const onScan = useEffectEvent(handleScan);
   useEffect(() => {
-    const stop = onFilesDropped((result) => onDrop(result)).catch((error: unknown) => {
+    const failed = (source: string) => (error: unknown) => {
       const { kind, message } = toAppError(error);
       setLog((entries) => [
         ...entries,
-        { id: nextLogId.current++, level: 'error', message: `Drag and drop: ${kind}: ${message}` },
+        { id: nextLogId.current++, level: 'error', message: `${source}: ${kind}: ${message}` },
       ]);
-    });
-    return () => void stop.then((unlisten) => unlisten?.());
+    };
+    const stops = [
+      onFilesDropped((result) => onDrop(result)).catch(failed('Drag and drop')),
+      onScanProgress((update) => onScan(update)).catch(failed('Folder scans')),
+    ];
+    return () => stops.forEach((stop) => void stop.then((unlisten) => unlisten?.()));
   }, []);
 
   // Global shortcuts are listed in app/shortcuts.ts; a modal dialog suspends them.
@@ -243,6 +333,9 @@ export function App() {
           >
             Add files…
           </Button>
+          <Button onClick={chooseFolder} disabled={importing}>
+            Add folder…
+          </Button>
           <Button onClick={() => setShortcutsOpen(true)} title="Keyboard shortcuts">
             Shortcuts
           </Button>
@@ -259,6 +352,18 @@ export function App() {
       <div className="workspace">
         <section className="pane files-pane" id="files-pane" aria-labelledby="files-title">
           <h2 id="files-title">Files</h2>
+          {scanOptions && <ScanOptionsForm options={scanOptions} onChange={changeScanOptions} />}
+          {scans.map((scan) => (
+            <ScanStatus
+              key={scan.scanId}
+              scan={scan}
+              stopping={stopping.includes(scan.scanId)}
+              onStop={() => stopScan(scan.scanId)}
+              onDismiss={() =>
+                setScans((current) => current.filter((other) => other.scanId !== scan.scanId))
+              }
+            />
+          ))}
           {importFailure && <ErrorNotice error={importFailure} />}
           {skipped && (
             <Notice
@@ -277,7 +382,7 @@ export function App() {
             reads={reads}
             failures={failures}
             selected={selected}
-            onSelect={(entry) => void inspect(entry)}
+            onSelect={selectFile}
           />
         </section>
         <Splitter

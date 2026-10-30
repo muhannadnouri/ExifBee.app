@@ -145,7 +145,7 @@ fn refuses_what_it_cannot_safely_read_and_ids_it_never_issued() {
             ("relative.jpg".into(), "not an absolute path"),
             (shown(&dir.0.join("missing.jpg")), "missing or not readable"),
             (shown(&dangling), "missing or not readable"),
-            (shown(&folder), "folders cannot be added yet"),
+            (shown(&folder), "is a folder"),
             (shown(&fifo), "not a regular file"),
         ]
         .map(|(path, reason): (String, &str)| (path, reason.to_string()))

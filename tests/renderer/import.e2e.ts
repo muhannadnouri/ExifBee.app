@@ -34,7 +34,7 @@ test('dropped JPEG, PDF, MP4, ZIP and unknown files are listed and inspected by 
     [{ path: '/home/user/Pictures', reason: 'folders cannot be added yet' }],
   );
   const files = page.getByRole('region', { name: 'Files' });
-  await expect(files.getByRole('listitem')).toHaveText([
+  await expect(files.getByRole('option')).toHaveText([
     '-leading-hyphen.jpg',
     'مرحبا "quoted" report.pdf',
     "it's a 🐝 movie.MP4",

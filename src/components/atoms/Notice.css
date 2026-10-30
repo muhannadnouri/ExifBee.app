@@ -30,3 +30,7 @@
   flex-wrap: wrap;
   gap: 0.5rem;
 }
+
+.notice-banner-info {
+  border-inline-start-color: var(--accent);
+}

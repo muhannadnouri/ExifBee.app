@@ -38,6 +38,8 @@
 .workspace {
   display: grid;
   grid-template-columns: minmax(0, min(var(--files-width), 45%)) auto minmax(0, 1fr);
+  /* One row of exactly the space left, so panes scroll inside it instead of growing. */
+  grid-template-rows: minmax(0, 1fr);
   min-height: 0;
 }
 
@@ -51,6 +53,12 @@
 
 .pane > h2 {
   margin-bottom: 0.5rem;
+}
+
+/* The file list fills what the notices and options leave and scrolls by itself. */
+.files-pane {
+  display: flex;
+  flex-direction: column;
 }
 
 /* Drawer headers always show; open drawers share --drawer-height, capped so the workspace keeps
