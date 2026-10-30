@@ -5,6 +5,7 @@ use crate::adapter::exiftool::process::CancelToken;
 use crate::adapter::exiftool::read::{read_metadata, FileMetadata};
 use crate::adapter::exiftool::resolver::ExifTool;
 use crate::domain::error::{AppError, ErrorKind};
+use crate::service::capabilities::CapabilityCache;
 use crate::service::dependency::{self, ExifToolStatus};
 use crate::service::files::{FileId, FileRegistry, ImportResult, ImportedFile, RejectedPath};
 use crate::service::reads::{self, ReadQueue};
@@ -21,6 +22,7 @@ pub type SettingsState = Mutex<SettingsStore>;
 pub type FilesState = Mutex<FileRegistry>;
 pub type ScansState = Mutex<Scans>;
 pub type ReadsState = Mutex<ReadQueue>;
+pub type CapabilitiesState = CapabilityCache;
 
 /// Folder scans of this session: the options every new scan uses (set from the UI, also used for
 /// dropped folders) and a stop switch per running scan.
@@ -414,7 +416,22 @@ pub fn cancel_reads(reads: State<'_, ReadsState>) -> Result<bool, AppError> {
     Ok(reads.lock().map_err(internal)?.cancel())
 }
 
-/// Reads the metadata of a file added in this session.
+/// Builds the capability snapshot in the background at startup (≈1 s on a cache miss), so the
+/// first file a user inspects does not wait for it. Failures are left to `read_file`, which then
+/// shows writability as unknown.
+pub fn warm_capabilities(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Ok(tool) = current_tool(&app) {
+            let _ = app
+                .state::<CapabilitiesState>()
+                .snapshot(&tool, &CancelToken::default());
+        }
+    });
+}
+
+/// Reads the metadata of a file added in this session, with each tag's group family and
+/// writability from the installed ExifTool's lists (S3-T04).
 ///
 /// Only an ID the registry issued is accepted; anything else is a `ScopeViolation`, so the
 /// renderer can never make Rust open a path of its choosing (SPEC §9).
@@ -431,7 +448,17 @@ pub async fn read_file(app: AppHandle, id: FileId) -> Result<FileMetadata, AppEr
                 )
             })?
         };
-        Ok(read_metadata(&current_tool(&app)?, &path)?)
+        let tool = current_tool(&app)?;
+        let mut file = read_metadata(&tool, &path)?;
+        // Without the capability lists the read is still shown, with writability Unknown.
+        match app
+            .state::<CapabilitiesState>()
+            .snapshot(&tool, &CancelToken::default())
+        {
+            Ok(snapshot) => snapshot.annotate(&mut file),
+            Err(error) => eprintln!("capability lists unavailable: {error}"),
+        }
+        Ok(file)
     })
     .await
 }

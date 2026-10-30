@@ -53,7 +53,9 @@ test('Add folder confirms the folder with its options, then a card shows progres
   await expect(card).toContainText('Finding files… 2 found, 3 left out, 1 skipped');
   await expect(card).toContainText('links outside not followed');
   // The first file found is inspected right away.
-  await expect(page.locator('caption')).toHaveText('/home/user/Photos/a.jpg');
+  await expect(
+    page.getByRole('region', { name: 'Metadata' }).getByRole('heading', { level: 3 }),
+  ).toHaveText('/home/user/Photos/a.jpg');
 
   await card.getByRole('button', { name: 'Cancel' }).click();
   expect(await cancelledScans(page)).toEqual([1]);

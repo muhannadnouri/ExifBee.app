@@ -3,6 +3,7 @@
 export const SHORTCUTS: { keys: string; action: string }[] = [
   { keys: 'Ctrl+O', action: 'Add files' },
   { keys: 'Ctrl+Shift+O', action: 'Add a folder' },
+  { keys: 'Ctrl+F', action: 'Find tags in the selected file' },
   { keys: 'Arrow keys, Home, End', action: 'Resize the focused pane divider' },
   { keys: 'Esc', action: 'Close the open dialog' },
 ];

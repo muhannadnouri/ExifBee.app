@@ -4,6 +4,7 @@ pub mod domain;
 pub mod platform;
 pub mod service;
 
+use service::capabilities::CapabilityCache;
 use service::settings::SettingsStore;
 use std::sync::Mutex;
 use tauri::{DragDropEvent, Manager, WindowEvent};
@@ -21,6 +22,10 @@ pub fn run() {
             app.manage::<commands::FilesState>(Mutex::default());
             app.manage::<commands::ScansState>(Mutex::default());
             app.manage::<commands::ReadsState>(Mutex::default());
+            app.manage::<commands::CapabilitiesState>(CapabilityCache::new(
+                &app.path().app_cache_dir()?,
+            ));
+            commands::warm_capabilities(app.handle());
             Ok(())
         })
         .on_window_event(|window, event| {

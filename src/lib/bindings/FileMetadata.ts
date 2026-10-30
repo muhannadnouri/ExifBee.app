@@ -10,7 +10,12 @@ error: string | null,
  * The error only says ExifTool does not know this format ([`UNKNOWN_FILE_TYPE`]): an
  * expected outcome for arbitrary files, shown neutrally rather than as a failure.
  */
-unsupported: boolean, warnings: Array<string>, 
+unsupported: boolean, 
+/**
+ * Whether ExifTool can write this file's format at all (`-listwf`); `None` when unknown or
+ * not yet annotated (see `CapabilitySnapshot::annotate`).
+ */
+formatWritable: boolean | null, warnings: Array<string>, 
 /**
  * Every tag in ExifTool's output order, with full identity and typed value.
  */

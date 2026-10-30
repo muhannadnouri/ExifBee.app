@@ -45,11 +45,13 @@ test('dropped JPEG, PDF, MP4, ZIP and unknown files are listed and inspected by 
     'Skipped 1 file already in the list. 1 item was not added.',
   );
   const metadata = page.getByRole('region', { name: 'Metadata' });
-  await expect(metadata.locator('caption')).toHaveText('/home/user/-leading-hyphen.jpg');
+  await expect(metadata.getByRole('heading', { level: 3 })).toHaveText(
+    '/home/user/-leading-hyphen.jpg',
+  );
 
   for (const { sourceFile } of DROPPED.slice(1)) {
     await files.getByTitle(sourceFile, { exact: true }).click();
-    await expect(metadata.locator('caption')).toHaveText(sourceFile);
+    await expect(metadata.getByRole('heading', { level: 3 })).toHaveText(sourceFile);
   }
   await expect(metadata.getByRole('alert')).toHaveText('ExifTool error: Unknown file type');
 

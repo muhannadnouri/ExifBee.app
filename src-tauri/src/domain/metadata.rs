@@ -20,6 +20,23 @@ pub struct TagEntry {
     pub copy: Option<u32>,
     pub name: String,
     pub value: MetadataValue,
+    /// Family-0 group (the general kind, e.g. `EXIF`, `XMP`, `QuickTime`), from the installed
+    /// ExifTool's tag list; `None` until a read is annotated with it.
+    pub group0: Option<String>,
+    /// Whether ExifTool can write this tag in this file; `Unknown` until proven (UX-006).
+    pub writable: Writability,
+}
+
+/// Whether a tag can be written in a given file, as far as the installed ExifTool says (UX-006).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub enum Writability {
+    Writable,
+    /// The tag is read-only, or the file format cannot be written at all.
+    ReadOnly,
+    /// Not provable: the tag or the file's format is not in ExifTool's lists.
+    Unknown,
 }
 
 /// A tag value. Scalars are text exactly as ExifTool printed them (read with

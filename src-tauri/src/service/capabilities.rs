@@ -3,7 +3,9 @@
 
 use crate::adapter::exiftool::lists::{self, ListError, Listings, TagCapability};
 use crate::adapter::exiftool::process::CancelToken;
+use crate::adapter::exiftool::read::FileMetadata;
 use crate::adapter::exiftool::resolver::{ExecutableIdentity, ExifTool};
+use crate::domain::metadata::{MetadataValue, Writability};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
@@ -83,6 +85,59 @@ impl CapabilitySnapshot {
                 .take(limit.min(MAX_PAGE))
                 .cloned()
                 .collect(),
+        }
+    }
+}
+
+impl CapabilitySnapshot {
+    /// The listed capability of `group1:name`, if this ExifTool defines that tag.
+    pub fn tag(&self, group1: &str, name: &str) -> Option<&TagCapability> {
+        let tags = &self.listings.tags;
+        tags.binary_search_by(|tag| (tag.group1.as_str(), tag.name.as_str()).cmp(&(group1, name)))
+            .ok()
+            .map(|index| &tags[index])
+    }
+
+    /// Fills in each tag's family-0 group and writability, and whether the file's format is
+    /// writable, from this ExifTool's lists (S3-T04, UX-006).
+    ///
+    /// Rules, per tag:
+    /// - Not in ExifTool's tag list → `Unknown` (nothing to prove it either way).
+    /// - Listed read-only (e.g. `Composite:ImageSize`, `File:FileType`) → `ReadOnly`.
+    /// - Listed writable in the `System` group (`FileName`, `FileModifyDate`, …) → `Writable`:
+    ///   these are file-system properties ExifTool sets for any file, whatever its format.
+    /// - Listed writable elsewhere → `Writable` if the format is in `-listwf`, `ReadOnly` if it
+    ///   is not (e.g. ZIP), `Unknown` if the format is unknown.
+    ///
+    /// The format is `File:FileTypeExtension` (what ExifTool detected from the content, not the
+    /// file name's extension). OS permissions are not considered here: S4 preflight checks them.
+    ///
+    /// Gotcha: a copy (`XMP-tiff:Copy1:Make`) is looked up as its tag (`XMP-tiff:Make`).
+    pub fn annotate(&self, file: &mut FileMetadata) {
+        let extension = file.tags.iter().find_map(|tag| match &tag.value {
+            MetadataValue::Text { text } if tag.key == "File:FileTypeExtension" => Some(text),
+            _ => None,
+        });
+        let format = extension.map(|extension| {
+            self.listings
+                .writable_extensions
+                .iter()
+                .any(|writable| writable.eq_ignore_ascii_case(extension))
+        });
+        file.format_writable = format;
+        for tag in &mut file.tags {
+            let listed = self.tag(&tag.group1, &tag.name);
+            tag.group0 = listed.map(|listed| listed.group0.clone());
+            tag.writable = match listed.map(|listed| listed.writable) {
+                None => Writability::Unknown,
+                Some(false) => Writability::ReadOnly,
+                Some(true) if tag.group1 == "System" => Writability::Writable,
+                Some(true) => match format {
+                    Some(true) => Writability::Writable,
+                    Some(false) => Writability::ReadOnly,
+                    None => Writability::Unknown,
+                },
+            };
         }
     }
 }

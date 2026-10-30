@@ -4,7 +4,7 @@
 use super::argv::{Args, ArgsError};
 use super::process::{self, CancelToken, RunError};
 use super::resolver::ExifTool;
-use crate::domain::metadata::{MetadataValue, StructField, TagEntry};
+use crate::domain::metadata::{MetadataValue, StructField, TagEntry, Writability};
 use serde::Serialize;
 use serde_json::{Map, Value};
 use std::fmt;
@@ -35,6 +35,9 @@ pub struct FileMetadata {
     /// The error only says ExifTool does not know this format ([`UNKNOWN_FILE_TYPE`]): an
     /// expected outcome for arbitrary files, shown neutrally rather than as a failure.
     pub unsupported: bool,
+    /// Whether ExifTool can write this file's format at all (`-listwf`); `None` when unknown or
+    /// not yet annotated (see `CapabilitySnapshot::annotate`).
+    pub format_writable: Option<bool>,
     pub warnings: Vec<String>,
     /// Every tag in ExifTool's output order, with full identity and typed value.
     pub tags: Vec<TagEntry>,
@@ -247,11 +250,14 @@ fn parse_file(mut object: Map<String, Value>) -> Result<FileMetadata, ReadError>
             name: name.into(),
             value,
             key,
+            group0: None,
+            writable: Writability::Unknown,
         });
     }
     Ok(FileMetadata {
         source_file,
         unsupported: error.as_deref() == Some(UNKNOWN_FILE_TYPE),
+        format_writable: None,
         error,
         warnings,
         tags,

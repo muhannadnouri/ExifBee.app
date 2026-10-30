@@ -1,4 +1,4 @@
-import type { MetadataValue, TagEntry } from '../../src/lib/ipc';
+import type { MetadataValue, TagEntry, Writability } from '../../src/lib/ipc';
 
 type Plain = string | Plain[] | { [field: string]: Plain } | { binary: number };
 
@@ -17,8 +17,15 @@ const valueOf = (plain: Plain): MetadataValue => {
   };
 };
 
-/** Test helper: `{ 'XMP-tiff:Copy1:Make': 'Canon' }` → typed `TagEntry[]` as Rust sends them. */
-export const tagsOf = (tags: Record<string, Plain>): TagEntry[] =>
+/**
+ * Test helper: `{ 'XMP-tiff:Copy1:Make': 'Canon' }` → typed `TagEntry[]` as Rust sends them.
+ * `capabilities` sets a tag's family and writability by key, as `read_file` annotates them;
+ * tags not listed stay unannotated (no family, writability unknown).
+ */
+export const tagsOf = (
+  tags: Record<string, Plain>,
+  capabilities: Record<string, [group0: string, writable: Writability]> = {},
+): TagEntry[] =>
   Object.entries(tags).map(([key, plain]) => {
     const parts = key.split(':');
     const [group1 = '', copy, name = ''] =
@@ -29,5 +36,7 @@ export const tagsOf = (tags: Record<string, Plain>): TagEntry[] =>
       copy: copy ? Number(copy.replace('Copy', '')) : null,
       name,
       value: valueOf(plain),
+      group0: capabilities[key]?.[0] ?? null,
+      writable: capabilities[key]?.[1] ?? 'unknown',
     };
   });

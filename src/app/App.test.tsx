@@ -55,6 +55,7 @@ const file = (sourceFile: string, extra: Partial<FileMetadata> = {}): FileMetada
   sourceFile,
   error: null,
   unsupported: false,
+  formatWritable: true,
   warnings: [],
   tags: tagsOf({ 'File:FileType': 'JPEG', 'XMP-dc:Title': '<img src=x onerror=alert(1)>' }),
   ...extra,
@@ -557,6 +558,23 @@ describe('theme switcher', () => {
     expect(document.documentElement.dataset.theme).toBe('dark');
     await user.click(theme());
     expect(document.documentElement.dataset.theme).toBeUndefined();
+  });
+});
+
+// @req FR-006, UX-004
+describe('find tags shortcut', () => {
+  it('Ctrl+F jumps to the tag search once a file is shown, and does nothing before', async () => {
+    const user = userEvent.setup();
+    addFiles.mockResolvedValueOnce(imported(['/a.jpg']));
+    answerReads([file('/a.jpg')]);
+    render(<App />);
+    await user.keyboard('{Control>}f{/Control}');
+    expect(document.activeElement).toBe(document.body);
+
+    await addViaMenu(user, 'Files…');
+    const search = await screen.findByRole('searchbox', { name: 'Find tags' });
+    await user.keyboard('{Control>}f{/Control}');
+    expect(document.activeElement).toBe(search);
   });
 });
 

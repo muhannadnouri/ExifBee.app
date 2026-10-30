@@ -5,7 +5,7 @@ import { Notice } from '../components/atoms/Notice';
 import { Drawer } from '../components/Drawer';
 import { Splitter } from '../components/Splitter';
 import { FilePane } from '../features/files/FilePane';
-import { MetadataInspector } from '../features/metadata/MetadataInspector';
+import { MetadataInspector, TAG_SEARCH_ID } from '../features/metadata/MetadataInspector';
 import { ShortcutsDialog } from '../features/help/ShortcutsDialog';
 import { SettingsDialog } from '../features/settings/SettingsDialog';
 import { ThemeSwitcher } from '../features/settings/ThemeSwitcher';
@@ -439,6 +439,13 @@ export function App() {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'o') {
         event.preventDefault();
         void (event.shiftKey ? chooseFolder() : chooseFiles());
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
+        const search = document.getElementById(TAG_SEARCH_ID);
+        if (search) {
+          event.preventDefault();
+          search.focus();
+        }
       }
     };
     window.addEventListener('keydown', onKeyDown);

@@ -3,8 +3,10 @@ import { addVia, mockIpc } from './mockIpc';
 
 const focusedName = (page: import('@playwright/test').Page) =>
   page.evaluate(() => {
-    const element = document.activeElement as HTMLElement | null;
-    return element?.getAttribute('aria-label') ?? element?.textContent?.trim() ?? '';
+    const element = document.activeElement as HTMLInputElement | null;
+    // Form fields are named by their <label>.
+    const label = element?.labels?.[0]?.textContent?.trim();
+    return element?.getAttribute('aria-label') ?? label ?? element?.textContent?.trim() ?? '';
   });
 
 // @req UX-004, FR-019
@@ -22,9 +24,11 @@ test.describe('keyboard-only use', () => {
     await page.keyboard.press('Enter');
     await expect(page.getByRole('menuitem', { name: /^Files…/ })).toBeFocused();
     await page.keyboard.press('Enter');
-    await expect(page.getByRole('status')).toHaveText('Could not fully read report.pdf');
+    await expect(page.getByRole('banner').getByRole('status')).toHaveText(
+      'Could not fully read report.pdf',
+    );
     await page.keyboard.press('Control+o');
-    await expect(page.getByRole('status')).toHaveText('Read IMG_0042.jpg');
+    await expect(page.getByRole('banner').getByRole('status')).toHaveText('Read IMG_0042.jpg');
 
     // Focus returned to Add; Tab on through the toolbar icons to the files list.
     await expect(add).toBeFocused();
@@ -50,9 +54,21 @@ test.describe('keyboard-only use', () => {
     await page.keyboard.press('Tab');
     await expect(page.getByRole('region', { name: 'Metadata' })).toBeFocused();
 
-    // Next come the drawer toggles; open the Log with the keyboard.
+    // Next the tag search; Ctrl+F gets there from anywhere too.
     await page.keyboard.press('Tab');
-    await expect(page.getByRole('button', { name: /Actions/ })).toBeFocused();
+    await expect(page.getByRole('searchbox', { name: 'Find tags' })).toBeFocused();
+    await page.keyboard.type('pdf:title');
+    await expect(page.getByRole('rowheader')).toHaveText(['PDF:Title']);
+
+    // Tab on past the inspector's controls to the drawer toggles; open the Log.
+    const actions = page.getByRole('button', { name: /Actions/ });
+    for (
+      let i = 0;
+      i < 30 && !(await actions.evaluate((node) => node === document.activeElement));
+      i++
+    )
+      await page.keyboard.press('Tab');
+    await expect(actions).toBeFocused();
     await page.keyboard.press('Tab');
     await page.keyboard.press('Enter');
     await expect(page.getByRole('log')).toContainText('report.pdf');
@@ -85,10 +101,16 @@ test.describe('keyboard-only use', () => {
     await page.getByRole('button', { name: /Log/ }).click();
     await page.locator('body').click({ position: { x: 1, y: 1 } });
 
+    // Tab until focus comes back to where it started (at most 200 stops).
     const visited: string[] = [];
-    for (let i = 0; i < 25; i++) {
+    for (let i = 0; i < 200; i++) {
       await page.keyboard.press('Tab');
-      visited.push(await focusedName(page));
+      const name = await focusedName(page);
+      if (name === visited[0]) {
+        visited.push(name);
+        break;
+      }
+      visited.push(name);
     }
     // Every stop has an accessible name, and focus cycles back to the first control.
     expect(visited.filter((name) => name === '')).toEqual([]);
@@ -100,6 +122,9 @@ test.describe('keyboard-only use', () => {
       'Keyboard shortcuts',
       'Settings',
       'Resize files pane',
+      'Find tags',
+      'All groups',
+      'Copy value of',
     ]) {
       expect(visited.some((name) => name.startsWith(control))).toBe(true);
     }

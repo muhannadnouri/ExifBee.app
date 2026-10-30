@@ -39,5 +39,80 @@
 .tags th[scope='row'] {
   font-weight: normal;
   white-space: nowrap;
+}
+
+.inspector-file {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+  font-weight: normal;
+  overflow-wrap: anywhere;
+}
+
+.inspector-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.5rem 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.inspector-controls .text-field {
+  flex: 1 1 14rem;
+}
+
+.inspector-show {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.inspector-count {
+  padding-bottom: 0.3rem;
+}
+
+/* Tree beside the table; when the pane is narrow the tree wraps above it. */
+.inspector-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.inspector-body > .group-tree {
+  flex: 0 0 13rem;
+}
+
+.inspector-table {
+  flex: 1 1 24rem;
+  min-width: 0;
+}
+
+.tags-sort {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-weight: inherit;
+  cursor: pointer;
+}
+
+/* The tag name is what people scan for; its group (and copy number) is secondary. */
+.tags-group {
+  white-space: nowrap;
   color: var(--text-muted);
+}
+
+.writability {
+  white-space: nowrap;
+}
+
+.writability-writable {
+  color: var(--success);
+}
+
+.writability-readOnly,
+.writability-unknown {
+  color: var(--text-muted);
+}
+
+.tags .icon-button {
+  font-size: 0.95rem;
 }

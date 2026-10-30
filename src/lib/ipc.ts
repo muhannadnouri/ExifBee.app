@@ -31,6 +31,7 @@ export type { ErrorKind } from './bindings/ErrorKind';
 export type { MetadataValue } from './bindings/MetadataValue';
 export type { StructField } from './bindings/StructField';
 export type { TagEntry } from './bindings/TagEntry';
+export type { Writability } from './bindings/Writability';
 
 /**
  * Every Rust command and its result type (DEC-018). Payload types are generated from Rust by

@@ -95,7 +95,7 @@ export async function mockIpc(page: Page, reads: MockRead[] = SAMPLE_READS) {
         read_file: ({ id }) => {
           const read = registered.get(String(id));
           if (!read) throw { kind: 'ScopeViolation', message: `${String(id)} is not a file` };
-          return read as Commands['read_file'];
+          return { unsupported: false, formatWritable: true, ...read } as Commands['read_file'];
         },
         pick_folder: () => '/home/user/Photos',
         scan_picked_folder: () => ++scans,
