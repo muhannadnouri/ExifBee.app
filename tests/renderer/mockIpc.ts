@@ -1,3 +1,4 @@
+import { expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import type { Commands } from '../../src/lib/ipc';
 import { tagsOf } from '../support/tags';
@@ -140,6 +141,16 @@ export async function mockIpc(page: Page, reads: MockRead[] = SAMPLE_READS) {
     [reads, DEFAULT_SCAN_OPTIONS] as const,
   );
 }
+
+/** Accessible names of the tag table's row headers (the full `Group:Tag` keys), once they match. */
+export const expectRowHeaders = (page: Page, keys: string[]) =>
+  expect
+    .poll(() =>
+      page
+        .getByRole('rowheader')
+        .evaluateAll((headers) => headers.map((header) => header.getAttribute('aria-label'))),
+    )
+    .toEqual(keys);
 
 /** Add ▾ → Files… or Folder…, as a pointer user does it. */
 export async function addVia(page: Page, item: 'Files…' | 'Folder…') {

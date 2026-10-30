@@ -55,6 +55,12 @@
   margin-bottom: 0.5rem;
 }
 
+/* The tag table corrects its own scroll position as rows get measured (TagRows); the browser's
+   scroll anchoring would correct the same change a second time. */
+.metadata-pane {
+  overflow-anchor: none;
+}
+
 .files-totals {
   margin: 0 0 0.5rem;
 }

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { addVia, mockIpc } from './mockIpc';
+import { addVia, expectRowHeaders, mockIpc } from './mockIpc';
 
 const focusedName = (page: import('@playwright/test').Page) =>
   page.evaluate(() => {
@@ -58,7 +58,7 @@ test.describe('keyboard-only use', () => {
     await page.keyboard.press('Tab');
     await expect(page.getByRole('searchbox', { name: 'Find tags' })).toBeFocused();
     await page.keyboard.type('pdf:title');
-    await expect(page.getByRole('rowheader')).toHaveText(['PDF:Title']);
+    await expectRowHeaders(page, ['PDF:Title']);
 
     // Tab on past the inspector's controls to the drawer toggles; open the Log.
     const actions = page.getByRole('button', { name: /Actions/ });

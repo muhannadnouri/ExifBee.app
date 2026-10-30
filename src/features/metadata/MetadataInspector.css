@@ -19,6 +19,23 @@
 .tags {
   width: 100%;
   border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.tags-col-group {
+  width: 18%;
+}
+
+.tags-col-tag {
+  width: 24%;
+}
+
+.tags-col-write {
+  width: 6.5rem;
+}
+
+.tags-col-copy {
+  width: 3rem;
 }
 
 .tags caption {
@@ -38,7 +55,6 @@
 
 .tags th[scope='row'] {
   font-weight: normal;
-  white-space: nowrap;
 }
 
 .inspector-file {
@@ -96,7 +112,6 @@
 
 /* The tag name is what people scan for; its group (and copy number) is secondary. */
 .tags-group {
-  white-space: nowrap;
   color: var(--text-muted);
 }
 

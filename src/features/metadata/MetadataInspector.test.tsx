@@ -35,13 +35,15 @@ const photo: FileMetadata = {
     },
   ),
 };
-const rowHeaders = () => screen.getAllByRole('rowheader').map((header) => header.textContent);
+/** Row headers' accessible names: the full Group:Tag key. */
+const rowHeaders = () =>
+  screen.getAllByRole('rowheader').map((header) => header.getAttribute('aria-label'));
 
 // @req FR-006, UX-006, TST-003
 describe('metadata inspector', () => {
   it('tells same-name tags apart by group and copy, and shows each one’s writability', () => {
     render(<MetadataInspector file={photo} failure={null} reading={false} />);
-    // Row headers carry the group for screen readers; the Group column shows it visibly.
+    // Row headers are named by the full key for screen readers; the Group column shows it.
     expect(rowHeaders()).toContain('IFD0:Make');
     expect(rowHeaders()).toContain('XMP-tiff:Copy1:Make');
     const xmpMake = screen.getByRole('row', { name: /XMP-tiff:Copy1:Make/ });

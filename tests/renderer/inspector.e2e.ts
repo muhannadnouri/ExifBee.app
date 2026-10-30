@@ -1,6 +1,6 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
-import { addVia, mockIpc } from './mockIpc';
+import { addVia, expectRowHeaders, mockIpc } from './mockIpc';
 import type { MockRead } from './mockIpc';
 import { tagsOf } from '../support/tags';
 
@@ -59,7 +59,7 @@ test('a group-qualified value is found among 3,000 tags without the window stall
   );
   await page.keyboard.press('Control+f');
   await page.keyboard.type('xmp-tiff:make');
-  await expect(metadata.getByRole('rowheader')).toHaveText(['XMP-tiff:Make']);
+  await expectRowHeaders(page, ['XMP-tiff:Make']);
   await expect(metadata).toContainText('Canon (XMP)');
   const typing = await page.evaluate(
     () => (window as unknown as { __longestTask: { ms: number } }).__longestTask.ms,
@@ -71,7 +71,7 @@ test('a group-qualified value is found among 3,000 tags without the window stall
   // Same name in two groups: ":make" (any group, tag Make) finds both, told apart by group.
   // A bare "make" also matches the MakerNotes group, as it should.
   await page.getByRole('searchbox', { name: 'Find tags' }).fill(':make');
-  await expect(metadata.getByRole('rowheader')).toHaveText(['IFD0:Make', 'XMP-tiff:Make']);
+  await expectRowHeaders(page, ['IFD0:Make', 'XMP-tiff:Make']);
   // Read-only tags are one choice away.
   await page.getByRole('searchbox', { name: 'Find tags' }).fill('');
   await page.getByRole('combobox', { name: 'Show' }).selectOption('readOnly');

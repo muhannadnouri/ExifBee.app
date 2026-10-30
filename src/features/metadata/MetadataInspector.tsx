@@ -1,13 +1,12 @@
-import { useDeferredValue, useMemo, useState } from 'react';
+import { memo, useCallback, useDeferredValue, useMemo, useState } from 'react';
 import { Button } from '../../components/atoms/Button';
-import { IconButton } from '../../components/atoms/IconButton';
 import { Select } from '../../components/atoms/Select';
 import { TextField } from '../../components/atoms/TextField';
 import { ErrorNotice } from '../../components/ErrorNotice';
-import type { AppError, FileMetadata, TagEntry, Writability } from '../../lib/ipc';
+import type { AppError, FileMetadata, Writability } from '../../lib/ipc';
 import { GroupTree } from './GroupTree';
-import { MetadataValueView } from './MetadataValueView';
-import { filterTags, groupTree, sortTags, tagsAsText, valueText } from './tagFilter';
+import { filterTags, groupTree, sortTags, tagsAsText } from './tagFilter';
+import { TagRows } from './TagRows';
 import type { GroupScope, Sort, SortKey } from './tagFilter';
 import './MetadataInspector.css';
 
@@ -16,14 +15,6 @@ type Props = { file: FileMetadata | null; failure: AppError | null; reading: boo
 /** Ctrl+F focuses this field (see app/shortcuts.ts). */
 export const TAG_SEARCH_ID = 'tag-search';
 
-const WRITABILITY: Record<Writability, { label: string; hint: string }> = {
-  writable: { label: 'Writable', hint: 'The installed ExifTool can write this tag in this file.' },
-  readOnly: {
-    label: 'Read-only',
-    hint: 'This tag or file format is not writable through the selected ExifTool version.',
-  },
-  unknown: { label: 'Unknown', hint: 'Write support could not be confirmed.' },
-};
 const SHOW_OPTIONS: { value: Writability | 'all'; label: string }[] = [
   { value: 'all', label: 'All tags' },
   { value: 'writable', label: 'Writable' },
@@ -51,8 +42,15 @@ const nextSort = (sort: Sort, key: SortKey): Sort =>
  *
  * Filters persist while moving between files, so the same tag can be compared across files; a
  * group the new file lacks falls back to all groups.
+ *
+ * Memoized: its props change only when the selection or its read does, so progress updates
+ * elsewhere in the app (several a second during a scan) do not redraw thousands of tags.
  */
-export function MetadataInspector({ file, failure, reading }: Props) {
+export const MetadataInspector = memo(function MetadataInspector({
+  file,
+  failure,
+  reading,
+}: Props) {
   const [text, setText] = useState('');
   const [scope, setScope] = useState<GroupScope>(null);
   const [writable, setWritable] = useState<Writability | 'all'>('all');
@@ -75,6 +73,13 @@ export function MetadataInspector({ file, failure, reading }: Props) {
     [file, query, scoped?.family, scoped?.group, writable, sort], // eslint-disable-line react-hooks/exhaustive-deps
   );
 
+  const copy = useCallback((content: string, what: string) => {
+    void navigator.clipboard.writeText(content).then(
+      () => setCopied(`Copied ${what}.`),
+      () => setCopied(`Could not copy ${what}: the clipboard is not available.`),
+    );
+  }, []);
+
   if (failure) return <ErrorNotice error={failure} />;
   if (!file) {
     return (
@@ -86,14 +91,6 @@ export function MetadataInspector({ file, failure, reading }: Props) {
     );
   }
 
-  const copy = async (content: string, what: string) => {
-    try {
-      await navigator.clipboard.writeText(content);
-      setCopied(`Copied ${what}.`);
-    } catch {
-      setCopied(`Could not copy ${what}: the clipboard is not available.`);
-    }
-  };
   const filtered = query.trim() !== '' || scoped !== null || writable !== 'all';
   const clearFilters = () => {
     setText('');
@@ -151,7 +148,7 @@ export function MetadataInspector({ file, failure, reading }: Props) {
         </label>
         <Button
           disabled={rows.length === 0}
-          onClick={() => void copy(tagsAsText(rows), `${rows.length} tags`)}
+          onClick={() => copy(tagsAsText(rows), `${rows.length} tags`)}
         >
           Copy visible
         </Button>
@@ -176,8 +173,17 @@ export function MetadataInspector({ file, failure, reading }: Props) {
               {filtered && <Button onClick={clearFilters}>Clear filters</Button>}
             </p>
           ) : (
-            <table className="tags">
+            <table className="tags" aria-rowcount={rows.length + 1}>
               <caption className="visually-hidden">Tags of {file.sourceFile}</caption>
+              {/* Fixed column widths: with automatic table layout, widths followed whichever
+                  rows were drawn, so heights changed with scrolling and the rows never settled. */}
+              <colgroup>
+                <col className="tags-col-group" />
+                <col className="tags-col-tag" />
+                <col />
+                <col className="tags-col-write" />
+                <col className="tags-col-copy" />
+              </colgroup>
               <thead>
                 <tr>
                   {COLUMNS.map(({ key, label }) => (
@@ -206,53 +212,12 @@ export function MetadataInspector({ file, failure, reading }: Props) {
                   </th>
                 </tr>
               </thead>
-              <tbody>
-                {rows.map((tag) => (
-                  <TagRow key={tag.key} tag={tag} onCopy={copy} />
-                ))}
-              </tbody>
+              {/* Per file: measured heights and the learned estimate belong to its tags. */}
+              <TagRows key={file.sourceFile} rows={rows} onCopy={copy} />
             </table>
           )}
         </div>
       </div>
     </div>
   );
-}
-
-function TagRow({
-  tag,
-  onCopy,
-}: {
-  tag: TagEntry;
-  onCopy: (content: string, what: string) => Promise<void>;
-}) {
-  const { label, hint } = WRITABILITY[tag.writable];
-  return (
-    <tr>
-      <td className="tags-group">
-        {tag.group1}
-        {tag.copy !== null && ` · copy ${tag.copy}`}
-      </td>
-      {/* The row header names the tag fully, so same-name tags in other groups stay distinct. */}
-      <th scope="row">
-        <span className="visually-hidden">{tag.key.slice(0, -tag.name.length)}</span>
-        {tag.name}
-      </th>
-      <td>
-        <MetadataValueView value={tag.value} />
-      </td>
-      <td>
-        <span className={`writability writability-${tag.writable}`} title={hint}>
-          {label}
-        </span>
-      </td>
-      <td>
-        <IconButton
-          icon="copy"
-          label={`Copy value of ${tag.key}`}
-          onClick={() => void onCopy(valueText(tag.value), `the value of ${tag.key}`)}
-        />
-      </td>
-    </tr>
-  );
-}
+});
