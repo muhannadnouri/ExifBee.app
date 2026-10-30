@@ -19,10 +19,17 @@ export function MetadataInspector({ file, failure, reading }: Props) {
   }
   return (
     <>
-      {file.error && (
-        <p role="alert" className="notice notice-error">
-          ExifTool error: {file.error}
+      {file.unsupported ? (
+        <p className="notice notice-neutral">
+          Unsupported format: ExifTool does not recognize this file type, so only file system
+          details are shown.
         </p>
+      ) : (
+        file.error && (
+          <p role="alert" className="notice notice-error">
+            ExifTool error: {file.error}
+          </p>
+        )
       )}
       {file.warnings.map((warning) => (
         <p key={warning} className="notice notice-warning">

@@ -9,18 +9,27 @@ import { MetadataInspector } from '../features/metadata/MetadataInspector';
 import { ShortcutsDialog } from '../features/help/ShortcutsDialog';
 import { SettingsDialog } from '../features/settings/SettingsDialog';
 import { ThemeSwitcher } from '../features/settings/ThemeSwitcher';
+import { IconButton } from '../components/atoms/IconButton';
+import { Icon } from '../components/atoms/Icon';
+import { MenuButton } from '../components/MenuButton';
+import { AddFolderDialog } from '../features/files/AddFolderDialog';
+import { ImportProgress, NO_READS, isRunning, roundResult } from '../features/files/ImportProgress';
+import type { ImportRound } from '../features/files/ImportProgress';
 import { ErrorNotice } from '../components/ErrorNotice';
 import { toAppError } from '../lib/errors';
 import {
   addFiles,
-  addFolder,
   appInfo,
+  cancelReads,
   cancelScan,
   exiftoolStatus,
   onFilesDropped,
+  onReadProgress,
   onScanProgress,
+  pickFolder,
+  prioritizeReads,
   readFile,
-  setScanOptions,
+  scanPickedFolder,
 } from '../lib/ipc';
 import type {
   AppError,
@@ -29,11 +38,11 @@ import type {
   FileMetadata,
   ImportResult,
   ImportedFile,
+  ReadSummary,
+  ReadUpdate,
   ScanOptions,
   ScanUpdate,
 } from '../lib/ipc';
-import { ScanOptionsForm } from '../features/files/ScanOptionsForm';
-import { ScanStatus, scanSummary } from '../features/files/ScanStatus';
 import './App.css';
 
 export type Layout = {
@@ -88,7 +97,8 @@ const statusFailure = (error: unknown): ExifToolStatus => ({
 
 type LogEntry = { id: number; level: 'info' | 'warning' | 'error'; message: string };
 
-const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+const plural = (count: number, one: string, many: string) =>
+  `${count.toLocaleString('en-US')} ${count === 1 ? one : many}`;
 
 export function App() {
   const [files, setFiles] = useState<ImportedFile[]>([]);
@@ -99,11 +109,26 @@ export function App() {
   const [importing, setImporting] = useState(false);
   const [importFailure, setImportFailure] = useState<AppError | null>(null);
   const [skipped, setSkipped] = useState<ImportResult | null>(null);
-  // Latest update of each scan shown in the files pane, in start order.
-  const [scans, setScans] = useState<ScanUpdate[]>([]);
+  // The current round of adding files (its scans and checking), shown as the progress card.
+  // `roundRef` mirrors it so back-to-back events never build on a stale round.
+  const [round, setRound] = useState<ImportRound | null>(null);
+  const roundRef = useRef<ImportRound | null>(null);
+  const nextRound = useRef(1);
   const [scanOptions, setScanOptionsState] = useState<ScanOptions | null>(null);
-  // Scans whose Stop was clicked, so the button says "Stopping…" until the final update.
+  // The folder just chosen for Add folder, awaiting confirmation in the dialog.
+  const [folderChoice, setFolderChoice] = useState<string | null>(null);
+  // Each opening of the Add folder dialog starts fresh from the session's options.
+  const [folderDialogKey, setFolderDialogKey] = useState(0);
+  // Scans whose Cancel was clicked, so the button says "Stopping…" until they end.
   const [stopping, setStopping] = useState<number[]>([]);
+  // Background read summaries by file ID. The Map is updated in place (setting a key is
+  // idempotent, so a repeated updater is harmless) and rewrapped to re-render: copying 200,000
+  // entries per update would cost more than the update itself.
+  const [summaries, setSummaries] = useState(() => ({ map: new Map<string, ReadSummary>() }));
+  const [readStopping, setReadStopping] = useState(false);
+  // Session totals from background reads, for the Files header.
+  const [tally, setTally] = useState({ errors: 0, warnings: 0, unsupported: 0 });
+  const prioritizeTimer = useRef<number | undefined>(undefined);
   const [log, setLog] = useState<LogEntry[]>([]);
   const [layout, setLayout] = useState(loadLayout);
   const [status, setStatus] = useState('');
@@ -217,39 +242,79 @@ export function App() {
     }
   };
 
+  /** Step one of Add folder: the native dialog in Rust, then the confirm dialog with options. */
   const chooseFolder = async () => {
     if (importing) return;
     setImporting(true);
     try {
-      if ((await addFolder()) !== null) setStatus('Scanning folder…');
+      const folder = await pickFolder();
+      if (folder !== null) {
+        setFolderDialogKey((key) => key + 1);
+        setFolderChoice(folder);
+      }
     } catch (error) {
       const appError = toAppError(error);
       setImportFailure(appError);
-      setStatus('Adding a folder failed');
+      setStatus('Choosing a folder failed');
       addLog('error', `Add folder: ${appError.kind}: ${appError.message}`);
     } finally {
       setImporting(false);
     }
   };
 
-  /** Lists a scan's new files as they arrive and logs every skipped item and the end state. */
+  /** Step two: scan the confirmed folder with the chosen options (they become the session's). */
+  const addFolder = async (options: ScanOptions) => {
+    const folder = folderChoice;
+    setFolderChoice(null);
+    setScanOptionsState(options);
+    try {
+      await scanPickedFolder(options);
+      setStatus(`Adding ${folder ?? 'folder'}…`);
+    } catch (error) {
+      const appError = toAppError(error);
+      setImportFailure(appError);
+      setStatus('Adding a folder failed');
+      addLog('error', `Add folder: ${appError.kind}: ${appError.message}`);
+    }
+  };
+
+  /** Moves the progress card to `next`; when that ends the round, announces and logs its result
+   * once and resets the Cancel state. */
+  const commitRound = (next: ImportRound) => {
+    const before = roundRef.current;
+    roundRef.current = next;
+    setRound(next);
+    const ended = !isRunning(next) && (!before || before.id !== next.id || isRunning(before));
+    if (!ended) return;
+    const { tone, text } = roundResult(next);
+    setStatus(text);
+    addLog(tone, text);
+    setStopping([]);
+    setReadStopping(false);
+  };
+
+  /** The round an update belongs to: the current one while it runs, otherwise a new one. */
+  const roundFor = () => {
+    const current = roundRef.current;
+    return current && isRunning(current)
+      ? current
+      : { id: nextRound.current++, scans: [], reads: null, readsBefore: NO_READS };
+  };
+
+  /** Lists a scan's new files as they arrive and logs every skipped item. */
   const handleScan = (update: ScanUpdate) => {
     setFiles((current) => [...current, ...update.added]);
-    setScans((current) =>
-      current.some((scan) => scan.scanId === update.scanId)
-        ? current.map((scan) => (scan.scanId === update.scanId ? update : scan))
-        : [...current, update],
-    );
+    const base = roundFor();
+    commitRound({
+      ...base,
+      scans: base.scans.some((scan) => scan.scanId === update.scanId)
+        ? base.scans.map((scan) => (scan.scanId === update.scanId ? update : scan))
+        : [...base.scans, update],
+    });
+    if (update.state !== 'Running')
+      setStopping((current) => current.filter((id) => id !== update.scanId));
     for (const { path, reason } of update.problems)
       addLog('warning', `Skipped: ${path}: ${reason}`);
-    if (update.state !== 'Running') {
-      const summary = scanSummary(update);
-      setStatus(summary);
-      addLog(
-        update.state === 'Complete' ? 'info' : update.state === 'Failed' ? 'error' : 'warning',
-        summary,
-      );
-    }
     const [first] = update.added;
     if (first && selected === null) void inspect(first);
   };
@@ -264,6 +329,80 @@ export function App() {
     });
   };
 
+  /** Records each file's summary, keeps the progress card and totals current, and logs real
+   * errors (an unsupported format is expected, so it is counted, not logged per file). */
+  const handleRead = (update: ReadUpdate) => {
+    setSummaries(({ map }) => {
+      for (const result of update.results) map.set(result.id, result);
+      return { map };
+    });
+    if (update.results.length > 0)
+      setTally((current) => {
+        const next = { ...current };
+        for (const result of update.results) {
+          if (result.unsupported) next.unsupported++;
+          else if (result.error) next.errors++;
+          if (result.warnings.length > 0) next.warnings++;
+        }
+        return next;
+      });
+    const base = roundFor();
+    // A new read run within a running round (a scan queued more files after the last one ended)
+    // adds to the round's totals instead of restarting them.
+    const previous = base.reads && base.reads.state !== 'Running' ? base.reads.counts : null;
+    commitRound({
+      ...base,
+      reads: update,
+      readsBefore: previous
+        ? {
+            done: base.readsBefore.done + previous.done,
+            total: base.readsBefore.total + previous.total,
+            errors: base.readsBefore.errors + previous.errors,
+            warnings: base.readsBefore.warnings + previous.warnings,
+            unsupported: base.readsBefore.unsupported + previous.unsupported,
+          }
+        : base.readsBefore,
+    });
+    const failed = update.results.filter((result) => result.error && !result.unsupported);
+    if (failed.length > 0) {
+      const paths = new Map(files.map((file) => [file.id, file.path]));
+      for (const { id, error } of failed) addLog('error', `${paths.get(id) ?? id}: ${error}`);
+    }
+  };
+
+  const stopReading = () => {
+    setReadStopping(true);
+    void cancelReads().catch((error: unknown) => {
+      setReadStopping(false);
+      const { kind, message } = toAppError(error);
+      addLog('error', `Stop checking files: ${kind}: ${message}`);
+    });
+  };
+
+  /** One Cancel for adding files: stops the round's running scans and the background reads.
+   * Files already listed stay; selecting one still reads it. */
+  const cancelRound = () => {
+    const current = roundRef.current;
+    if (!current) return;
+    for (const scan of current.scans)
+      if (scan.state === 'Running' && !stopping.includes(scan.scanId)) stopScan(scan.scanId);
+    if (current.reads?.state === 'Running' && !readStopping) stopReading();
+  };
+
+  /** Rows in view are checked next; debounced, so scrolling sends one request, not dozens. */
+  const prioritizeVisible = (ids: string[]) => {
+    window.clearTimeout(prioritizeTimer.current);
+    if (roundRef.current?.reads?.state !== 'Running') return;
+    prioritizeTimer.current = window.setTimeout(
+      () =>
+        void prioritizeReads(ids).catch((error: unknown) => {
+          const { kind, message } = toAppError(error);
+          addLog('error', `Check visible files first: ${kind}: ${message}`);
+        }),
+      150,
+    );
+  };
+
   /** Clicks inspect at once; arrowing waits until the selection rests, so holding a key does not
    * start an ExifTool read for every file passed. */
   const selectFile = (entry: ImportedFile, fromKeyboard: boolean) => {
@@ -273,17 +412,10 @@ export function App() {
     keyboardRead.current = window.setTimeout(() => void inspect(entry), 200);
   };
 
-  const changeScanOptions = (next: ScanOptions) =>
-    void setScanOptions(next)
-      .then(setScanOptionsState)
-      .catch((error: unknown) => {
-        const { kind, message } = toAppError(error);
-        addLog('error', `Folder options were not changed: ${kind}: ${message}`);
-      });
-
   // Drops and scans happen in Rust; only their results arrive here (DEC-020, DEC-021).
   const onDrop = useEffectEvent(handleImport);
   const onScan = useEffectEvent(handleScan);
+  const onRead = useEffectEvent(handleRead);
   useEffect(() => {
     const failed = (source: string) => (error: unknown) => {
       const { kind, message } = toAppError(error);
@@ -295,6 +427,7 @@ export function App() {
     const stops = [
       onFilesDropped((result) => onDrop(result)).catch(failed('Drag and drop')),
       onScanProgress((update) => onScan(update)).catch(failed('Folder scans')),
+      onReadProgress((update) => onRead(update)).catch(failed('Metadata reads')),
     ];
     return () => stops.forEach((stop) => void stop.then((unlisten) => unlisten?.()));
   }, []);
@@ -302,10 +435,10 @@ export function App() {
   // Global shortcuts are listed in app/shortcuts.ts; a modal dialog suspends them.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (shortcutsOpen || settingsOpen) return;
+      if (shortcutsOpen || settingsOpen || folderChoice !== null) return;
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'o') {
         event.preventDefault();
-        void chooseFiles();
+        void (event.shiftKey ? chooseFolder() : chooseFiles());
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -325,45 +458,59 @@ export function App() {
       <header className="toolbar">
         <h1 className="app-name">ExifBee</h1>
         <div role="toolbar" aria-label="Main toolbar" className="toolbar-actions">
-          <Button
-            onClick={chooseFiles}
+          <MenuButton
             disabled={importing}
-            aria-keyshortcuts="Control+O"
-            title="Add files (Ctrl+O)"
+            items={[
+              { label: 'Files…', shortcut: 'Ctrl+O', onSelect: () => void chooseFiles() },
+              { label: 'Folder…', shortcut: 'Ctrl+Shift+O', onSelect: () => void chooseFolder() },
+            ]}
           >
-            Add files…
-          </Button>
-          <Button onClick={chooseFolder} disabled={importing}>
-            Add folder…
-          </Button>
-          <Button onClick={() => setShortcutsOpen(true)} title="Keyboard shortcuts">
-            Shortcuts
-          </Button>
-          <Button onClick={() => setSettingsOpen(true)}>Settings</Button>
+            <Icon name="plus" />
+            Add
+          </MenuButton>
+          <div className="toolbar-end">
+            <ThemeSwitcher />
+            <IconButton
+              icon="help"
+              label="Keyboard shortcuts"
+              onClick={() => setShortcutsOpen(true)}
+            />
+            <IconButton icon="settings" label="Settings" onClick={() => setSettingsOpen(true)} />
+          </div>
         </div>
-        <div className="toolbar-end">
-          <span className="status" role="status">
-            {status}
-          </span>
-          <ThemeSwitcher />
-        </div>
+        {/* Announces starts and results; visible progress lives in the files pane. */}
+        <span className="visually-hidden" role="status">
+          {status}
+        </span>
       </header>
 
       <div className="workspace">
         <section className="pane files-pane" id="files-pane" aria-labelledby="files-title">
           <h2 id="files-title">Files</h2>
-          {scanOptions && <ScanOptionsForm options={scanOptions} onChange={changeScanOptions} />}
-          {scans.map((scan) => (
-            <ScanStatus
-              key={scan.scanId}
-              scan={scan}
-              stopping={stopping.includes(scan.scanId)}
-              onStop={() => stopScan(scan.scanId)}
-              onDismiss={() =>
-                setScans((current) => current.filter((other) => other.scanId !== scan.scanId))
-              }
+          {files.length > 0 && (
+            <p className="files-totals muted">
+              {[
+                plural(files.length, 'file', 'files'),
+                tally.errors > 0 && plural(tally.errors, 'with errors', 'with errors'),
+                tally.warnings > 0 && plural(tally.warnings, 'with warnings', 'with warnings'),
+                tally.unsupported > 0 && plural(tally.unsupported, 'unsupported', 'unsupported'),
+              ]
+                .filter(Boolean)
+                .join(' · ')}
+            </p>
+          )}
+          {round && (
+            <ImportProgress
+              key={round.id}
+              round={round}
+              stopping={readStopping || stopping.length > 0}
+              onCancel={cancelRound}
+              onDismiss={() => {
+                roundRef.current = null;
+                setRound(null);
+              }}
             />
-          ))}
+          )}
           {importFailure && <ErrorNotice error={importFailure} />}
           {skipped && (
             <Notice
@@ -380,7 +527,9 @@ export function App() {
           <FilePane
             files={files}
             reads={reads}
+            summaries={summaries.map}
             failures={failures}
+            onVisibleChange={prioritizeVisible}
             selected={selected}
             onSelect={selectFile}
           />
@@ -448,7 +597,11 @@ export function App() {
           ) : (
             <div role="log" aria-label="Session log">
               {/* Newest first; `reversed` keeps each entry's number as its event order. */}
-              <ol className="log" reversed>
+              <ol
+                className="log"
+                reversed
+                style={{ '--log-digits': String(log.length).length } as CSSProperties}
+              >
                 {[...log].reverse().map((entry) => (
                   <li key={entry.id} className={`log-${entry.level}`}>
                     {entry.level}: {entry.message}
@@ -459,6 +612,23 @@ export function App() {
           )}
         </Drawer>
       </div>
+      {scanOptions && (
+        <AddFolderDialog
+          key={folderDialogKey}
+          folder={folderChoice}
+          options={scanOptions}
+          onChooseAgain={() =>
+            void pickFolder()
+              .then((folder) => folder !== null && setFolderChoice(folder))
+              .catch((error: unknown) => {
+                const { kind, message } = toAppError(error);
+                addLog('error', `Add folder: ${kind}: ${message}`);
+              })
+          }
+          onAdd={(options) => void addFolder(options)}
+          onClose={() => setFolderChoice(null)}
+        />
+      )}
       <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       <SettingsDialog
         open={settingsOpen}

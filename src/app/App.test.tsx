@@ -8,6 +8,8 @@ import type {
   FileMetadata,
   ImportResult,
   ImportedFile,
+  ReadSummary,
+  ReadUpdate,
   ScanOptions,
   ScanUpdate,
 } from '../lib/ipc';
@@ -18,9 +20,11 @@ const ipc = vi.hoisted(() => ({
   readFile: vi.fn(),
   onFilesDropped: vi.fn(),
   onScanProgress: vi.fn(),
-  addFolder: vi.fn(),
+  onReadProgress: vi.fn(),
+  cancelReads: vi.fn(),
+  pickFolder: vi.fn(),
+  scanPickedFolder: vi.fn(),
   cancelScan: vi.fn(),
-  setScanOptions: vi.fn(),
   appInfo: vi.fn(),
   exiftoolStatus: vi.fn(),
   chooseExiftoolOverride: vi.fn(),
@@ -50,6 +54,7 @@ HTMLDialogElement.prototype.close = function close(this: HTMLDialogElement) {
 const file = (sourceFile: string, extra: Partial<FileMetadata> = {}): FileMetadata => ({
   sourceFile,
   error: null,
+  unsupported: false,
   warnings: [],
   tags: tagsOf({ 'File:FileType': 'JPEG', 'XMP-dc:Title': '<img src=x onerror=alert(1)>' }),
   ...extra,
@@ -77,6 +82,7 @@ const answerReads = (reads: FileMetadata[]) =>
 const unlisten = vi.fn();
 let dropHandler: (result: ImportResult) => void = () => undefined;
 let scanHandler: (update: ScanUpdate) => void = () => undefined;
+let readHandler: (update: ReadUpdate) => void = () => undefined;
 const scanOptions: ScanOptions = {
   recursive: true,
   includeHidden: false,
@@ -85,12 +91,22 @@ const scanOptions: ScanOptions = {
   excludeExtensions: [],
 };
 
+/** Add ▾ → Files… or Folder…, the way a pointer user does it. */
+const addViaMenu = async (user: ReturnType<typeof userEvent.setup>, item: 'Files…' | 'Folder…') => {
+  await user.click(screen.getByRole('button', { name: 'Add' }));
+  await user.click(screen.getByRole('menuitem', { name: new RegExp(`^${item}`) }));
+};
+
 beforeEach(() => {
   localStorage.clear();
   Object.values(ipc).forEach((mock) => mock.mockReset());
   unlisten.mockReset();
   ipc.appInfo.mockResolvedValue({ version: '0.1.0', settingsWarning: null, scanOptions });
   ipc.exiftoolStatus.mockResolvedValue(healthy);
+  ipc.onReadProgress.mockImplementation(async (handler: typeof readHandler) => {
+    readHandler = handler;
+    return unlisten;
+  });
   ipc.onScanProgress.mockImplementation(async (handler: typeof scanHandler) => {
     scanHandler = handler;
     return unlisten;
@@ -107,7 +123,9 @@ describe('application shell', () => {
   it('shows the toolbar, both panes and both drawers with useful empty states', () => {
     render(<App />);
     expect(screen.getByRole('toolbar', { name: 'Main toolbar' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Add files…' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Add' }).getAttribute('aria-haspopup')).toBe('menu');
+    for (const name of [/^Theme: System/, 'Keyboard shortcuts', 'Settings'])
+      expect(screen.getByRole('button', { name })).toBeTruthy();
     expect(screen.getByRole('region', { name: 'Files' }).textContent).toContain(
       'drop files onto the window',
     );
@@ -127,8 +145,7 @@ describe('application shell', () => {
     answerReads([file('/photos/a.jpg'), file('/docs/b.pdf', { error: 'File format error' })]);
     render(<App />);
 
-    for (let i = 0; i < 3; i++)
-      await user.click(screen.getByRole('button', { name: 'Add files…' }));
+    for (let i = 0; i < 3; i++) await addViaMenu(user, 'Files…');
 
     const pane = screen.getByRole('region', { name: 'Files' });
     const files = within(pane);
@@ -205,8 +222,8 @@ describe('application shell', () => {
       'warning: Not added: /m/folder: folders cannot be added yet',
     );
     unmount();
-    // Both listeners (drops and scans) stop.
-    await vi.waitFor(() => expect(unlisten).toHaveBeenCalledTimes(2));
+    // All three listeners (drops, scans, reads) stop.
+    await vi.waitFor(() => expect(unlisten).toHaveBeenCalledTimes(3));
   });
 
   it('reports failed reads and imports instead of failing silently, and retries a failed read', async () => {
@@ -222,7 +239,7 @@ describe('application shell', () => {
     render(<App />);
 
     // A cancelled dialog changes nothing.
-    await user.click(screen.getByRole('button', { name: 'Add files…' }));
+    await addViaMenu(user, 'Files…');
     expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.getByRole('region', { name: 'Files' }).textContent).toContain('No files yet');
 
@@ -240,12 +257,12 @@ describe('application shell', () => {
     await within(metadata).findByRole('table');
     expect(within(metadata).queryByRole('alert')).toBeNull();
 
-    await user.click(screen.getByRole('button', { name: 'Add files…' }));
+    await addViaMenu(user, 'Files…');
     expect(files.getByRole('alert').textContent).toContain('registry lock poisoned');
   });
 });
 
-// @req FR-004, FR-021, NFR-001
+// @req FR-004, FR-021, NFR-001, UX-001
 describe('folder scans', () => {
   const scan = (change: Partial<ScanUpdate>): ScanUpdate => ({
     scanId: 3,
@@ -254,19 +271,65 @@ describe('folder scans', () => {
     added: [],
     problems: [],
     counts: { added: 0, duplicates: 0, filtered: 0, skipped: 0 },
+    options: scanOptions,
     ...change,
   });
 
-  it('lists files as a scan streams in, stops on request and reports the partial result', async () => {
+  it('asks for the folder first, then confirms it with the options shown at that moment', async () => {
     const user = userEvent.setup();
-    ipc.addFolder.mockResolvedValue(3);
+    ipc.pickFolder
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce('/home/user/Photos')
+      .mockResolvedValueOnce('/home/user/Other')
+      .mockResolvedValueOnce('/home/user/Third');
+    ipc.scanPickedFolder.mockResolvedValue(3);
+    render(<App />);
+    await vi.waitFor(() => expect(ipc.appInfo).toHaveBeenCalled());
+
+    // Cancelling the native dialog opens nothing.
+    await addViaMenu(user, 'Folder…');
+    expect(screen.queryByRole('dialog', { name: 'Add folder' })).toBeNull();
+
+    await user.keyboard('{Control>}{Shift>}o{/Shift}{/Control}');
+    const dialog = await screen.findByRole('dialog', { name: 'Add folder' });
+    expect(dialog.textContent).toContain('/home/user/Photos');
+    await user.click(within(dialog).getByRole('button', { name: 'Choose…' }));
+    expect(dialog.textContent).toContain('/home/user/Other');
+
+    await user.click(
+      within(dialog).getByRole('checkbox', { name: 'Include hidden files and folders' }),
+    );
+    await user.click(within(dialog).getByText('Filter by extension'));
+    await user.type(
+      within(dialog).getByRole('textbox', { name: 'Only these extensions (empty = all)' }),
+      'jpg, .PNG',
+    );
+    await user.click(within(dialog).getByRole('button', { name: 'Add folder' }));
+    expect(ipc.scanPickedFolder).toHaveBeenCalledWith({
+      ...scanOptions,
+      includeHidden: true,
+      includeExtensions: ['jpg', '.PNG'],
+    });
+    expect((dialog as HTMLDialogElement).open).toBe(false);
+
+    // The next folder starts from the options used last.
+    await addViaMenu(user, 'Folder…');
+    const again = await screen.findByRole('dialog', { name: 'Add folder' });
+    expect(
+      (
+        within(again).getByRole('checkbox', {
+          name: 'Include hidden files and folders',
+        }) as HTMLInputElement
+      ).checked,
+    ).toBe(true);
+  });
+
+  it('shows a scan in a progress card above the list, with Cancel and an honest result', async () => {
+    const user = userEvent.setup();
     ipc.cancelScan.mockResolvedValue(true);
     answerReads([file('/photos/a.jpg'), file('/photos/b.jpg')]);
     render(<App />);
     await vi.waitFor(() => expect(ipc.onScanProgress).toHaveBeenCalledOnce());
-
-    await user.click(screen.getByRole('button', { name: 'Add folder…' }));
-    expect(screen.getByRole('status', { name: '' }).textContent).toBe('Scanning folder…');
     act(() =>
       scanHandler(
         scan({
@@ -280,94 +343,244 @@ describe('folder scans', () => {
       scanHandler(
         scan({
           added: [entry('/photos/b.jpg')],
-          counts: { added: 2, duplicates: 0, filtered: 0, skipped: 1 },
+          counts: { added: 2, duplicates: 0, filtered: 4, skipped: 1 },
         }),
       ),
     );
+    const region = screen.getByRole('region', { name: 'Adding files' });
+    const card = within(region);
+    expect(card.getByRole('heading').textContent).toBe('Adding /photos');
+    expect(card.getByText(/^Finding files/).textContent).toBe(
+      'Finding files… 2 found, 4 left out, 1 skipped',
+    );
+    expect(card.getByText(/^Subfolders/).textContent).toBe(
+      'Subfolders · no hidden files · links outside not followed',
+    );
+    expect(card.getByText('Checking starts as files are found.')).toBeTruthy();
     const pane = within(screen.getByRole('region', { name: 'Files' }));
     expect(pane.getAllByRole('option').map((item) => item.textContent)).toEqual(['a.jpg', 'b.jpg']);
     // Only the first file found is inspected; later batches do not steal the selection.
     await within(screen.getByRole('region', { name: 'Metadata' })).findByRole('table');
     expect(readFile).toHaveBeenCalledExactlyOnceWith('/photos/a.jpg');
 
-    await user.click(pane.getByRole('button', { name: 'Stop' }));
+    await user.click(card.getByRole('button', { name: 'Cancel' }));
     expect(ipc.cancelScan).toHaveBeenCalledWith(3);
+    expect((card.getByRole('button', { name: 'Stopping…' }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
     act(() =>
       scanHandler(
-        scan({ state: 'Cancelled', counts: { added: 2, duplicates: 0, filtered: 0, skipped: 1 } }),
+        scan({ state: 'Cancelled', counts: { added: 2, duplicates: 0, filtered: 4, skipped: 1 } }),
       ),
     );
-    expect(pane.getByText(/stopped before finishing/).textContent).toBe(
-      'Scan of /photos stopped before finishing: 2 added, 1 skipped so far. The Log lists each skipped item.',
+    expect(card.getByText(/^Stopped/).textContent).toBe(
+      'Stopped: 2 listed, 0 checked. Selecting a file still reads it.',
     );
 
     await user.click(screen.getByRole('button', { name: /Log/ }));
-    expect(
-      within(screen.getByRole('log'))
-        .getAllByRole('listitem')
-        .map((item) => item.textContent)
-        .slice(0, 2),
-    ).toEqual([
-      'warning: Scan of /photos stopped before finishing: 2 added, 1 skipped so far.',
-      'info: Read /photos/a.jpg',
-    ]);
-    expect(screen.getByRole('log').textContent).toContain(
-      'warning: Skipped: /photos/fifo: not a regular file',
+    const log = screen.getByRole('log').textContent;
+    expect(log).toContain('warning: Stopped: 2 listed, 0 checked.');
+    expect(log).toContain('warning: Skipped: /photos/fifo: not a regular file');
+    await user.click(card.getByRole('button', { name: 'Dismiss' }));
+    expect(region.isConnected).toBe(false);
+  });
+});
+
+// @req FR-005, NFR-002, UX-005
+describe('background metadata reads', () => {
+  const summary = (id: string, change: Partial<ReadSummary> = {}): ReadSummary => ({
+    id,
+    fileType: 'JPEG',
+    error: null,
+    unsupported: false,
+    warnings: [],
+    tagCount: 40,
+    ...change,
+  });
+  const counts = (done: number, total: number, errors = 0, warnings = 0, unsupported = 0) => ({
+    done,
+    total,
+    errors,
+    warnings,
+    unsupported,
+  });
+  const scanOf = (state: ScanUpdate['state'], added: string[], total: number): ScanUpdate => ({
+    scanId: 3,
+    root: '/home/user/m',
+    state,
+    added: added.map(entry),
+    problems: [],
+    counts: { added: total, duplicates: 0, filtered: 0, skipped: 0 },
+    options: scanOptions,
+  });
+  const reading = (
+    state: ReadUpdate['state'],
+    done: number,
+    total: number,
+    results: ReadSummary[] = [],
+  ) => act(() => readHandler({ state, results, counts: counts(done, total), message: null }));
+
+  it('shows scanning and checking in one card with one bar, and one Cancel stops both', async () => {
+    const user = userEvent.setup();
+    ipc.cancelScan.mockResolvedValue(true);
+    ipc.cancelReads.mockResolvedValue(true);
+    answerReads([file('/m/a.jpg')]);
+    render(<App />);
+    await vi.waitFor(() => expect(ipc.onReadProgress).toHaveBeenCalledOnce());
+    const paths = ['/m/a.jpg', '/m/broken.jpg', '/m/odd.mp4', '/m/cache.bin'];
+    act(() => scanHandler(scanOf('Running', paths, 4)));
+    act(() =>
+      readHandler({
+        state: 'Running',
+        results: [
+          summary('/m/broken.jpg', { fileType: null, error: 'File format error' }),
+          summary('/m/odd.mp4', { fileType: 'MP4', warnings: ['Truncated mdat atom'] }),
+          summary('/m/cache.bin', {
+            fileType: null,
+            error: 'Unknown file type',
+            unsupported: true,
+          }),
+        ],
+        counts: counts(3, 4, 1, 1, 1),
+        message: null,
+      }),
     );
+
+    const card = within(screen.getByRole('region', { name: 'Adding files' }));
+    expect(card.getByRole('heading').textContent).toBe('Adding /home/user/m');
+    const bar = card.getByRole('progressbar', { name: 'Files checked' }) as HTMLProgressElement;
+    expect([bar.value, bar.max]).toEqual([3, 4]);
+    expect(card.getByText(/^Checking/).textContent).toBe('Checking 3 of 4');
+    const pane = within(screen.getByRole('region', { name: 'Files' }));
+    expect(pane.getByText(/^4 files/).textContent).toBe(
+      '4 files · 1 with errors · 1 with warnings · 1 unsupported',
+    );
+    expect(pane.getAllByRole('option').map((row) => row.getAttribute('aria-label'))).toEqual([
+      '/m/a.jpg',
+      '/m/broken.jpg (error)',
+      '/m/odd.mp4 (warning)',
+      '/m/cache.bin (unsupported)',
+    ]);
+
+    await user.click(card.getByRole('button', { name: 'Cancel' }));
+    expect(ipc.cancelScan).toHaveBeenCalledWith(3);
+    expect(ipc.cancelReads).toHaveBeenCalledOnce();
+    act(() => scanHandler(scanOf('Cancelled', [], 4)));
+    // Still stopping until the reads report their end too.
+    expect(card.getByRole('button', { name: 'Stopping…' })).toBeTruthy();
+    reading('Cancelled', 3, 4);
+    expect(card.getByText(/^Stopped/).textContent).toBe(
+      'Stopped: 4 listed, 3 checked. Selecting a file still reads it.',
+    );
+
+    await user.click(screen.getByRole('button', { name: /Log/ }));
+    const log = screen.getByRole('log').textContent;
+    expect(log).toContain('error: /m/broken.jpg: File format error');
+    // An unknown format is counted, not logged as an error.
+    expect(log).not.toContain('cache.bin');
   });
 
-  it('shows the folder options in force and keeps them when Rust refuses a change', async () => {
-    const user = userEvent.setup();
-    ipc.setScanOptions
-      .mockImplementationOnce(async (options: ScanOptions) => ({
-        ...options,
-        includeExtensions: ['jpg', 'png'],
-      }))
-      .mockRejectedValueOnce({ kind: 'Internal', message: 'lock poisoned' });
+  it('keeps one total when a scan starts a second read run in the same round', async () => {
     render(<App />);
-    const pane = within(screen.getByRole('region', { name: 'Files' }));
-    expect((await pane.findByText(/^Folder options/)).textContent).toBe(
-      'Folder options (with subfolders · no hidden files · links outside not followed)',
+    await vi.waitFor(() => expect(ipc.onReadProgress).toHaveBeenCalledOnce());
+    act(() => scanHandler(scanOf('Running', [], 180)));
+    reading('Running', 50, 100);
+    reading('Complete', 100, 100);
+    reading('Running', 30, 80);
+    const card = within(screen.getByRole('region', { name: 'Adding files' }));
+    expect(card.getByText(/^Checking/).textContent).toBe('Checking 130 of 180');
+    act(() => scanHandler(scanOf('Complete', [], 180)));
+    reading('Complete', 80, 80);
+    expect(card.getByText(/^Done/).textContent).toBe('Done: 180 files added, 180 checked.');
+  });
+
+  it('a quick import leaves no card; one that takes over a second shows its progress', async () => {
+    render(<App />);
+    await vi.waitFor(() => expect(ipc.onReadProgress).toHaveBeenCalledOnce());
+    reading('Running', 0, 3);
+    reading('Complete', 3, 3);
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    expect(screen.queryByRole('region', { name: 'Adding files' })).toBeNull();
+
+    reading('Running', 0, 500);
+    expect(screen.queryByRole('region', { name: 'Adding files' })).toBeNull();
+    const card = await screen.findByRole('region', { name: 'Adding files' }, { timeout: 2000 });
+    expect(within(card).getByRole('heading').textContent).toBe('Checking new files');
+  });
+
+  it('shows an unsupported file neutrally when it is inspected', async () => {
+    const user = userEvent.setup();
+    addFiles.mockResolvedValueOnce(imported(['/m/cache.bin']));
+    answerReads([file('/m/cache.bin', { error: 'Unknown file type', unsupported: true })]);
+    render(<App />);
+    await addViaMenu(user, 'Files…');
+    const metadata = within(screen.getByRole('region', { name: 'Metadata' }));
+    expect((await metadata.findByText(/^Unsupported format/)).textContent).toContain(
+      'ExifTool does not recognize this file type',
     );
+    expect(metadata.queryByRole('alert')).toBeNull();
+  });
 
-    await user.click(pane.getByText(/^Folder options/));
-    const only = pane.getByRole('textbox', { name: 'Only these extensions (empty = all)' });
-    await user.type(only, '.JPG png');
-    await user.tab();
-    expect(ipc.setScanOptions).toHaveBeenCalledWith({
-      ...scanOptions,
-      includeExtensions: ['.JPG', 'png'],
-    });
-    // The form shows what Rust normalized, not what was typed.
-    expect((only as HTMLInputElement).value).toBe('jpg, png');
-
-    await user.click(pane.getByRole('checkbox', { name: 'Include subfolders' }));
-    await user.click(screen.getByRole('button', { name: /Log/ }));
-    await within(screen.getByRole('log')).findByText(/Folder options were not changed: Internal/);
-    expect(
-      (pane.getByRole('checkbox', { name: 'Include subfolders' }) as HTMLInputElement).checked,
-    ).toBe(true);
+  it('says so at once when ExifTool cannot be used for checking', () => {
+    render(<App />);
+    act(() =>
+      readHandler({
+        state: 'Failed',
+        results: [],
+        counts: counts(0, 4),
+        message: 'ExifTool was not found',
+      }),
+    );
+    const card = within(screen.getByRole('region', { name: 'Adding files' }));
+    expect(card.getByRole('alert').textContent).toBe(
+      'Files were not checked: ExifTool was not found.',
+    );
   });
 });
 
 // @req UX-002
 describe('theme switcher', () => {
-  it('applies the chosen theme immediately and keeps it across reloads', async () => {
+  it('cycles System → Light → Dark, says what a click does, and keeps the choice', async () => {
     const user = userEvent.setup();
+    const theme = () => screen.getByRole('button', { name: /^Theme:/ });
     const { unmount } = render(<App />);
-    const select = screen.getByRole('combobox', { name: 'Theme' });
-    expect((select as HTMLSelectElement).value).toBe('system');
+    expect(theme().getAttribute('aria-label')).toBe('Theme: System. Switch to Light');
 
-    await user.selectOptions(select, 'dark');
-    expect(document.documentElement.dataset.theme).toBe('dark');
+    await user.click(theme());
+    expect(document.documentElement.dataset.theme).toBe('light');
+    expect(theme().getAttribute('title')).toBe('Theme: Light. Switch to Dark');
     unmount();
 
     render(<App />);
-    expect((screen.getByRole('combobox', { name: 'Theme' }) as HTMLSelectElement).value).toBe(
-      'dark',
-    );
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Theme' }), 'system');
+    expect(theme().getAttribute('aria-label')).toBe('Theme: Light. Switch to Dark');
+    await user.click(theme());
+    expect(document.documentElement.dataset.theme).toBe('dark');
+    await user.click(theme());
     expect(document.documentElement.dataset.theme).toBeUndefined();
+  });
+});
+
+// @req UX-001, UX-004
+describe('Add menu', () => {
+  it('works from the keyboard: ↓ opens it on Files…, arrows move, Esc closes and returns focus', async () => {
+    const user = userEvent.setup();
+    addFiles.mockResolvedValue(null);
+    render(<App />);
+    const add = screen.getByRole('button', { name: 'Add' });
+    add.focus();
+    await user.keyboard('{ArrowDown}');
+    expect(add.getAttribute('aria-expanded')).toBe('true');
+    expect(document.activeElement?.textContent).toBe('Files…Ctrl+O');
+    await user.keyboard('{ArrowDown}');
+    expect(document.activeElement?.textContent).toBe('Folder…Ctrl+Shift+O');
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(document.activeElement).toBe(add);
+
+    await user.keyboard('{Enter}');
+    await user.keyboard('{Enter}');
+    expect(addFiles).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('menu')).toBeNull();
   });
 });
 
@@ -406,8 +619,8 @@ describe('keyboard navigation and focus', () => {
       .mockResolvedValueOnce(imported(['/b.jpg']));
     answerReads([file('/a.jpg'), file('/b.jpg')]);
     render(<App />);
-    await user.click(screen.getByRole('button', { name: 'Add files…' }));
-    await user.click(screen.getByRole('button', { name: 'Add files…' }));
+    await addViaMenu(user, 'Files…');
+    await addViaMenu(user, 'Files…');
 
     const logToggle = screen.getByRole('button', { name: /Log/ });
     await user.click(logToggle);
@@ -433,7 +646,7 @@ describe('keyboard navigation and focus', () => {
     addFiles.mockResolvedValueOnce(imported(paths));
     answerReads(paths.map((path) => file(path)));
     render(<App />);
-    await user.click(screen.getByRole('button', { name: 'Add files…' }));
+    await addViaMenu(user, 'Files…');
     const list = screen.getByRole('listbox', { name: 'Files' });
     await within(screen.getByRole('region', { name: 'Metadata' })).findByRole('table');
     expect(readFile).toHaveBeenCalledTimes(1);

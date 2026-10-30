@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-prioritize-reads"
+description = "Enables the prioritize_reads command without any pre-configured scope."
+commands.allow = ["prioritize_reads"]
+
+[[permission]]
+identifier = "deny-prioritize-reads"
+description = "Denies the prioritize_reads command without any pre-configured scope."
+commands.deny = ["prioritize_reads"]

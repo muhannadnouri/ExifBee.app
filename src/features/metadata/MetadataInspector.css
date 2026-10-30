@@ -11,6 +11,11 @@
   color: var(--warning);
 }
 
+.notice-neutral {
+  font-weight: normal;
+  color: var(--text-muted);
+}
+
 .tags {
   width: 100%;
   border-collapse: collapse;

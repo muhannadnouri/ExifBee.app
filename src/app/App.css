@@ -3,6 +3,8 @@
 .shell {
   display: grid;
   grid-template-rows: auto minmax(6rem, 1fr) auto;
+  /* Exactly the window's width, so a long toolbar line shrinks instead of widening the page. */
+  grid-template-columns: minmax(0, 1fr);
   height: 100%;
   overflow: hidden;
 }
@@ -17,21 +19,19 @@
   border-bottom: 1px solid var(--border);
 }
 
+/* Add on the left; theme, help and settings icons pushed to the right end. */
 .toolbar-actions {
   display: flex;
-  flex-wrap: wrap;
+  flex: 1;
+  align-items: center;
   gap: 0.5rem;
 }
 
 .toolbar-end {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: 0.25rem;
   margin-inline-start: auto;
-}
-
-.status {
-  color: var(--text-muted);
 }
 
 /* The files pane never takes more than 45% of the window, so metadata stays usable. */
@@ -55,6 +55,10 @@
   margin-bottom: 0.5rem;
 }
 
+.files-totals {
+  margin: 0 0 0.5rem;
+}
+
 /* The file list fills what the notices and options leave and scrolls by itself. */
 .files-pane {
   display: flex;
@@ -73,9 +77,11 @@
   height: min(var(--drawer-height), 40vh);
 }
 
+/* The number gutter fits the largest entry number (--log-digits, set by App) plus ". ";
+   a fixed gutter cut numbers off from 100 on. */
 .log {
   margin: 0;
-  padding-inline-start: 1.5rem;
+  padding-inline-start: calc((var(--log-digits, 2) + 2) * 1ch);
   font-family: var(--font-mono);
   overflow-wrap: anywhere;
 }

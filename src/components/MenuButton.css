@@ -1,0 +1,49 @@
+.menu-button {
+  position: relative;
+}
+
+.menu-button > .button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.menu {
+  position: absolute;
+  inset-inline-start: 0;
+  top: calc(100% + 0.25rem);
+  z-index: 2;
+  min-width: 100%;
+  margin: 0;
+  padding: 0.25rem;
+  list-style: none;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.18);
+}
+
+.menu [role='menuitem'] {
+  display: flex;
+  justify-content: space-between;
+  gap: 1.5rem;
+  width: 100%;
+  padding: 0.35rem 0.6rem;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  text-align: start;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.menu [role='menuitem']:hover,
+.menu [role='menuitem']:focus-visible {
+  background: var(--accent-subtle);
+  outline: none;
+}
+
+.menu kbd {
+  font: inherit;
+  color: var(--text-muted);
+}

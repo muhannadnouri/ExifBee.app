@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { mockIpc } from './mockIpc';
+import { addVia, mockIpc } from './mockIpc';
 
 const focusedName = (page: import('@playwright/test').Page) =>
   page.evaluate(() => {
@@ -15,22 +15,23 @@ test.describe('keyboard-only use', () => {
   });
 
   test('the read flow works without a pointer', async ({ page }) => {
-    // Tab to Add files and activate it, then add a second file with the shortcut.
+    // Tab to Add, open its menu with Enter and choose Files…, then add a second file with Ctrl+O.
+    const add = page.getByRole('button', { name: 'Add', exact: true });
     await page.keyboard.press('Tab');
-    await expect(page.getByRole('button', { name: 'Add files…' })).toBeFocused();
+    await expect(add).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('menuitem', { name: /^Files…/ })).toBeFocused();
     await page.keyboard.press('Enter');
     await expect(page.getByRole('status')).toHaveText('Could not fully read report.pdf');
     await page.keyboard.press('Control+o');
     await expect(page.getByRole('status')).toHaveText('Read IMG_0042.jpg');
 
-    // Focus is still on Add files; Tab on through the toolbar to the files list.
-    await expect(page.getByRole('button', { name: 'Add files…' })).toBeFocused();
+    // Focus returned to Add; Tab on through the toolbar icons to the files list.
+    await expect(add).toBeFocused();
     for (const step of [
-      'Add folder…',
-      'Shortcuts',
+      'Theme: System. Switch to Light',
+      'Keyboard shortcuts',
       'Settings',
-      'System', // the theme dropdown, named by its current option text here
-      'Folder options',
       'report.pdf', // the file list: one Tab stop, named here by its rows' text
     ]) {
       await page.keyboard.press('Tab');
@@ -60,7 +61,7 @@ test.describe('keyboard-only use', () => {
   test('the shortcuts dialog opens from the keyboard, keeps focus inside and returns it on Esc', async ({
     page,
   }) => {
-    const opener = page.getByRole('button', { name: 'Shortcuts' });
+    const opener = page.getByRole('button', { name: 'Keyboard shortcuts' });
     await opener.focus();
     await page.keyboard.press('Enter');
     const dialog = page.getByRole('dialog', { name: 'Keyboard shortcuts' });
@@ -80,7 +81,7 @@ test.describe('keyboard-only use', () => {
   });
 
   test('Tab reaches every control, each with a name, and never gets stuck', async ({ page }) => {
-    await page.getByRole('button', { name: 'Add files…' }).click();
+    await addVia(page, 'Files…');
     await page.getByRole('button', { name: /Log/ }).click();
     await page.locator('body').click({ position: { x: 1, y: 1 } });
 
@@ -93,7 +94,13 @@ test.describe('keyboard-only use', () => {
     expect(visited.filter((name) => name === '')).toEqual([]);
     const first = visited[0];
     expect(visited.indexOf(first ?? '', 1)).toBeGreaterThan(0);
-    for (const control of ['Add files…', 'Shortcuts', 'Resize files pane']) {
+    for (const control of [
+      'Add',
+      'Theme:',
+      'Keyboard shortcuts',
+      'Settings',
+      'Resize files pane',
+    ]) {
       expect(visited.some((name) => name.startsWith(control))).toBe(true);
     }
   });

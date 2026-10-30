@@ -1,15 +1,19 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
-import type { AppError, FileMetadata, ImportedFile } from '../../lib/ipc';
+import type { AppError, FileMetadata, ImportedFile, ReadSummary } from '../../lib/ipc';
 import './FilePane.css';
 
 type Props = {
   files: ImportedFile[];
   reads: Record<string, FileMetadata>;
+  /** Background read results; a full read of the selected file takes precedence. */
+  summaries: Map<string, ReadSummary>;
   failures: Record<string, AppError>;
   selected: string | null;
   /** `fromKeyboard` is set while arrowing through the list, so the caller can wait before reading. */
   onSelect: (file: ImportedFile, fromKeyboard: boolean) => void;
+  /** Called with the IDs of the rendered rows whenever they change, so they can be read first. */
+  onVisibleChange: (ids: string[]) => void;
 };
 
 /** Rows drawn above and below the visible ones, so fast scrolling rarely shows a gap. */
@@ -23,7 +27,15 @@ const OVERSCAN = 20;
  * is a single Tab stop: arrows, Home/End and Page Up/Down move the selection, and each row
  * announces its position (`aria-posinset`/`aria-setsize`) and full path.
  */
-export function FilePane({ files, reads, failures, selected, onSelect }: Props) {
+export function FilePane({
+  files,
+  reads,
+  summaries,
+  failures,
+  selected,
+  onSelect,
+  onVisibleChange,
+}: Props) {
   const listRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   // Until measured (and in jsdom, which has no layout), assume a typical window and row.
@@ -45,11 +57,20 @@ export function FilePane({ files, reads, failures, selected, onSelect }: Props) 
     return () => observer.disconnect();
   }, [empty]);
 
+  const first = Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN);
+  const last = Math.min(files.length, Math.ceil((scrollTop + viewport) / rowHeight) + OVERSCAN);
+  // Report the rendered range only when it really changes, not on every batch added below it.
+  const visibleKey = `${files[first]?.id}:${files[last - 1]?.id}`;
+  const onVisible = useEffectEvent(() =>
+    onVisibleChange(files.slice(first, last).map((file) => file.id)),
+  );
+  useEffect(() => {
+    if (!empty) onVisible();
+  }, [visibleKey, empty]);
+
   if (empty)
     return <p className="muted">No files yet. Use Add files… or drop files onto the window.</p>;
 
-  const first = Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN);
-  const last = Math.min(files.length, Math.ceil((scrollTop + viewport) / rowHeight) + OVERSCAN);
   const current = files.findIndex((file) => file.id === selected);
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -95,13 +116,17 @@ export function FilePane({ files, reads, failures, selected, onSelect }: Props) 
         }}
       >
         {files.slice(first, last).map((file, offset) => {
-          const read = reads[file.id];
-          const flag =
-            failures[file.id] || read?.error
-              ? ' (error)'
-              : read && read.warnings.length > 0
-                ? ' (warning)'
-                : '';
+          const read = reads[file.id] ?? summaries.get(file.id);
+          // An unknown format is expected for arbitrary files, so it is flagged neutrally.
+          const flag = failures[file.id]
+            ? ' (error)'
+            : read?.unsupported
+              ? ' (unsupported)'
+              : read?.error
+                ? ' (error)'
+                : read && read.warnings.length > 0
+                  ? ' (warning)'
+                  : '';
           return (
             <div
               key={file.id}
@@ -116,7 +141,11 @@ export function FilePane({ files, reads, failures, selected, onSelect }: Props) 
               onClick={() => onSelect(file, false)}
             >
               {file.name}
-              {flag && <span className="file-flag">{flag}</span>}
+              {flag && (
+                <span className={read?.unsupported ? 'file-flag-neutral' : 'file-flag'}>
+                  {flag}
+                </span>
+              )}
             </div>
           );
         })}

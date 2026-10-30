@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { mockIpc, savedTheme } from './mockIpc';
+import { addVia, mockIpc, savedTheme } from './mockIpc';
 
 // Baselines are generated and compared only in the pinned Playwright container:
 // `npm run test:e2e:renderer:docker` writes missing baselines; after a reviewed visual change,
@@ -20,9 +20,8 @@ for (const mode of ['light', 'dark'] as const) {
 
     test('workbench with files, warning, error and open drawers', async ({ page }) => {
       await page.goto('/');
-      const add = page.getByRole('button', { name: 'Add files…' });
-      await add.click();
-      await add.click();
+      await addVia(page, 'Files…');
+      await addVia(page, 'Files…');
       await page.getByRole('button', { name: /Actions/ }).click();
       await page.getByRole('button', { name: /Log/ }).click();
       await expect(page.getByRole('log')).toContainText('IMG_0042.jpg');

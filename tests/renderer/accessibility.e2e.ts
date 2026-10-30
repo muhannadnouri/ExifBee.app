@@ -1,7 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
-import { dropFiles, mockIpc, savedTheme, scanUpdate } from './mockIpc';
+import { addVia, dropFiles, mockIpc, readUpdate, savedTheme, scanUpdate } from './mockIpc';
 
 // WCAG 2.2 A/AA rules, checked in a real browser so contrast and layout rules apply.
 const audit = async (page: Page) => {
@@ -28,16 +28,14 @@ for (const mode of ['light', 'dark'] as const) {
       expect(await audit(page)).toEqual([]);
     });
 
-    test('populated workbench with errors, warnings, skip and scan notices, folder options and open drawers has no violations', async ({
+    test('populated workbench with errors, warnings, skip notice, progress card and open drawers has no violations', async ({
       page,
     }) => {
       await page.goto('/');
-      const add = page.getByRole('button', { name: 'Add files…' });
-      await add.click();
-      await add.click();
+      await addVia(page, 'Files…');
+      await addVia(page, 'Files…');
       await dropFiles(page, [], ['/home/user/Pictures/IMG_0042.jpg']);
       await expect(page.getByRole('button', { name: 'Dismiss' })).toBeVisible();
-      await page.getByText('Folder options').click();
       await scanUpdate(page, {
         scanId: 1,
         root: '/home/user/Pictures',
@@ -46,10 +44,28 @@ for (const mode of ['light', 'dark'] as const) {
         problems: [],
         counts: { added: 120, duplicates: 2, filtered: 5, skipped: 1 },
       });
-      await expect(page.getByRole('button', { name: 'Stop' })).toBeVisible();
-      await page.getByRole('button', { name: /Actions/ }).click();
-      await page.getByRole('button', { name: /Log/ }).click();
-      await expect(page.getByRole('log')).toContainText('IMG_0042.jpg');
+      const card = page.getByRole('region', { name: 'Adding files' });
+      await expect(card.getByRole('button', { name: 'Cancel' })).toBeVisible();
+      await readUpdate(page, {
+        state: 'Running',
+        results: [],
+        counts: { done: 40, total: 122, errors: 1, warnings: 2, unsupported: 3 },
+        message: null,
+      });
+      await expect(card).toContainText('Checking 40 of 122');
+      expect(await audit(page)).toEqual([]);
+    });
+
+    test('open Add menu and Add folder dialog have no violations', async ({ page }) => {
+      await page.goto('/');
+      await page.getByRole('button', { name: 'Add', exact: true }).click();
+      await expect(page.getByRole('menu')).toBeVisible();
+      expect(await audit(page)).toEqual([]);
+      await page.getByRole('menuitem', { name: /^Folder…/ }).click();
+      await expect(page.getByRole('dialog', { name: 'Add folder' })).toContainText(
+        '/home/user/Photos',
+      );
+      await page.getByText('Filter by extension').click();
       expect(await audit(page)).toEqual([]);
     });
 
@@ -63,7 +79,7 @@ for (const mode of ['light', 'dark'] as const) {
 
     test('keyboard shortcuts dialog has no violations', async ({ page }) => {
       await page.goto('/');
-      await page.getByRole('button', { name: 'Shortcuts' }).click();
+      await page.getByRole('button', { name: 'Keyboard shortcuts' }).click();
       await expect(page.getByRole('dialog', { name: 'Keyboard shortcuts' })).toBeVisible();
       expect(await audit(page)).toEqual([]);
     });

@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
-import { mockIpc } from './mockIpc';
+import { addVia, mockIpc } from './mockIpc';
 import { tagsOf } from '../support/tags';
 
 // The preview server sends the production CSP from tauri.conf.json (vite.config.ts), so these
@@ -26,16 +26,17 @@ const violations = (page: Page) =>
 /** Uses every UI area once: reads, drawers, both dialogs, theme. */
 async function exerciseUi(page: Page) {
   await page.goto('/');
-  const add = page.getByRole('button', { name: 'Add files…' });
-  await add.click();
-  await add.click();
+  await addVia(page, 'Files…');
+  await addVia(page, 'Files…');
   await page.getByRole('button', { name: /Actions/ }).click();
   await page.getByRole('button', { name: /Log/ }).click();
-  await page.getByRole('combobox', { name: 'Theme' }).selectOption('dark');
+  // System → Light → Dark.
+  await page.getByRole('button', { name: /^Theme:/ }).click();
+  await page.getByRole('button', { name: /^Theme:/ }).click();
   await page.getByRole('button', { name: 'Settings' }).click();
   await expect(page.getByRole('dialog', { name: 'Settings' })).toContainText('/usr/bin/exiftool');
   await page.keyboard.press('Escape');
-  await page.getByRole('button', { name: 'Shortcuts' }).click();
+  await page.getByRole('button', { name: 'Keyboard shortcuts' }).click();
   await page.keyboard.press('Escape');
 }
 
@@ -78,16 +79,17 @@ test('hostile metadata renders as text and never runs', async ({ page }) => {
     },
   ]);
   await page.goto('/');
-  await page.getByRole('button', { name: 'Add files…' }).click();
+  await addVia(page, 'Files…');
   await page.getByRole('button', { name: /Log/ }).click();
 
   const metadata = page.getByRole('region', { name: 'Metadata' });
   await expect(metadata).toContainText(HOSTILE_TITLE);
   await expect(metadata).toContainText(HOSTILE_DESCRIPTION);
-  // No element was created from the metadata anywhere on the page, and nothing executed.
-  expect(await page.locator('main img, #root img, #root script, #root svg, #root b').count()).toBe(
-    0,
-  );
+  // No element was created from the metadata anywhere on the page (the app's own icons are
+  // .icon SVGs), and nothing executed.
+  expect(
+    await page.locator('main img, #root img, #root script, #root svg:not(.icon), #root b').count(),
+  ).toBe(0);
   expect(
     await page.evaluate(() => (window as unknown as { __pwned?: number }).__pwned),
   ).toBeUndefined();

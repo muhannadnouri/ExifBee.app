@@ -38,3 +38,7 @@
 .file-flag {
   color: var(--warning);
 }
+
+.file-flag-neutral {
+  color: var(--text-muted);
+}

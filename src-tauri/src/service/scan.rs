@@ -109,6 +109,8 @@ pub struct ScanUpdate {
     pub added: Vec<ImportedFile>,
     pub problems: Vec<RejectedPath>,
     pub counts: ScanCounts,
+    /// The options this scan runs with, so the UI shows the policy actually in force.
+    pub options: ScanOptions,
 }
 
 /// Files handed to the registry at once, so the lock is never held for long.
@@ -156,6 +158,7 @@ pub fn scan(
         added: Vec::new(),
         problems: Vec::new(),
         counts: ScanCounts::default(),
+        options: options.clone(),
     };
     let canonical_root = match fs::canonicalize(root).and_then(|canonical| {
         fs::metadata(&canonical)?

@@ -1,4 +1,5 @@
-//! Reads one file's metadata as structured JSON (S0-T06 spike; S2-T05 builds the full parser).
+//! Reads metadata as structured JSON: one file on demand, or a batch of files in one ExifTool
+//! run (S0-T06 spike; S2-T05 parser; S3-T03 batches).
 
 use super::argv::{Args, ArgsError};
 use super::process::{self, CancelToken, RunError};
@@ -7,7 +8,7 @@ use crate::domain::metadata::{MetadataValue, StructField, TagEntry};
 use serde::Serialize;
 use serde_json::{Map, Value};
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const READ_TIMEOUT: Duration = Duration::from_secs(60);
@@ -21,6 +22,8 @@ pub const READ_API: &str = "StructFormat=JSONQ";
 /// Pathological-output guards on top of the byte cap (S2-T05).
 pub const MAX_TAGS_PER_FILE: usize = 100_000;
 pub const MAX_NESTING: usize = 32;
+/// ExifTool's per-file error for content it cannot identify (13.55 and the 12.76 floor).
+pub const UNKNOWN_FILE_TYPE: &str = "Unknown file type";
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -29,6 +32,9 @@ pub struct FileMetadata {
     pub source_file: String,
     /// ExifTool's per-file `Error`; the read still returns whatever ExifTool recognized.
     pub error: Option<String>,
+    /// The error only says ExifTool does not know this format ([`UNKNOWN_FILE_TYPE`]): an
+    /// expected outcome for arbitrary files, shown neutrally rather than as a failure.
+    pub unsupported: bool,
     pub warnings: Vec<String>,
     /// Every tag in ExifTool's output order, with full identity and typed value.
     pub tags: Vec<TagEntry>,
@@ -117,6 +123,58 @@ pub fn read_metadata(tool: &ExifTool, path: &Path) -> Result<FileMetadata, ReadE
     parse_output(&output.stdout)
 }
 
+/// Files per batched ExifTool run: inside SPEC §10.2's 50–200, and small enough that one batch's
+/// JSON stays far below [`MAX_READ_OUTPUT`] for ordinary files.
+pub const READ_BATCH: usize = 100;
+
+/// Output of [`read_batch`]: what ExifTool returned, plus its stderr, which names the files it
+/// could not read at all (they get no JSON object).
+#[derive(Debug, Clone, PartialEq)]
+pub struct BatchOutput {
+    pub files: Vec<FileMetadata>,
+    pub stderr: String,
+}
+
+/// Reads several files in one ExifTool run with the same options as [`read_metadata`].
+///
+/// Flow: build `-json … -- <paths>` (absolute paths only) → run with `cancel`, the 60 s timeout
+/// and the 32 MiB output cap for the whole batch → parse every object.
+///
+/// Gotchas:
+/// - Files that vanished or cannot be opened get no object; ExifTool says why on stderr. With
+///   no readable file at all stdout is empty, which here is an empty batch, not a failure.
+/// - `SourceFile` is the path exactly as passed, which is how callers match results to files.
+/// - Any failure (timeout, cap, malformed JSON) fails the whole batch; callers split it.
+pub fn read_batch(
+    tool: &ExifTool,
+    paths: &[PathBuf],
+    cancel: &CancelToken,
+) -> Result<BatchOutput, ReadError> {
+    let args = Args::new()
+        .options(READ_OPTIONS)
+        .api(READ_API)
+        .files(paths)
+        .map_err(|error| ReadError::InvalidInput(error.to_string()))?;
+    let output = process::run(
+        &tool.path,
+        args.as_slice(),
+        READ_TIMEOUT,
+        MAX_READ_OUTPUT,
+        cancel,
+    )
+    .map_err(|error: RunError| match error {
+        RunError::Cancelled => ReadError::Cancelled,
+        error => ReadError::ProcessFailure(format!("ExifTool {error}")),
+    })?;
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let files = if output.stdout.iter().all(u8::is_ascii_whitespace) {
+        Vec::new()
+    } else {
+        parse_batch(&output.stdout)?
+    };
+    Ok(BatchOutput { files, stderr })
+}
+
 /// Turns `-json -a -G1:4 -s -struct -api StructFormat=JSONQ` output for one file into a
 /// [`FileMetadata`] (S2-T05).
 ///
@@ -135,16 +193,28 @@ pub fn read_metadata(tool: &ExifTool, path: &Path) -> Result<FileMetadata, ReadE
 /// - Limits: more than [`MAX_TAGS_PER_FILE`] tags or nesting deeper than [`MAX_NESTING`] is
 ///   rejected as pathological; the byte cap is enforced earlier by the executor.
 pub fn parse_output(stdout: &[u8]) -> Result<FileMetadata, ReadError> {
-    let failure = |message: String| ReadError::ProcessFailure(message);
-    let mut files: Vec<Map<String, Value>> = serde_json::from_slice(stdout)
-        .map_err(|error| failure(format!("unexpected ExifTool output: {error}")))?;
+    let mut files = parse_batch(stdout)?;
     if files.len() != 1 {
-        return Err(failure(format!(
+        return Err(ReadError::ProcessFailure(format!(
             "expected metadata for one file, got {}",
             files.len()
         )));
     }
-    let mut object = files.remove(0);
+    Ok(files.remove(0))
+}
+
+/// Like [`parse_output`] for a batch: one [`FileMetadata`] per object, in ExifTool's order.
+/// One malformed object rejects the whole batch (the output cannot be trusted), and the caller
+/// splits the batch to find the file responsible.
+pub fn parse_batch(stdout: &[u8]) -> Result<Vec<FileMetadata>, ReadError> {
+    let files: Vec<Map<String, Value>> = serde_json::from_slice(stdout).map_err(|error| {
+        ReadError::ProcessFailure(format!("unexpected ExifTool output: {error}"))
+    })?;
+    files.into_iter().map(parse_file).collect()
+}
+
+fn parse_file(mut object: Map<String, Value>) -> Result<FileMetadata, ReadError> {
+    let failure = |message: String| ReadError::ProcessFailure(message);
     let source_file = match object.shift_remove("SourceFile") {
         Some(Value::String(source)) => source,
         _ => return Err(failure("ExifTool output has no SourceFile".into())),
@@ -181,6 +251,7 @@ pub fn parse_output(stdout: &[u8]) -> Result<FileMetadata, ReadError> {
     }
     Ok(FileMetadata {
         source_file,
+        unsupported: error.as_deref() == Some(UNKNOWN_FILE_TYPE),
         error,
         warnings,
         tags,

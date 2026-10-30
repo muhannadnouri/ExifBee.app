@@ -27,16 +27,17 @@ test.describe('theme behavior', () => {
   test('all three modes persist across reloads', async ({ page }) => {
     await page.emulateMedia({ colorScheme: 'light' });
     await page.goto('/');
-    const theme = page.getByRole('combobox', { name: 'Theme' });
+    const theme = page.getByRole('button', { name: /^Theme:/ });
 
-    for (const [mode, background] of [
-      ['dark', DARK_BG],
-      ['light', LIGHT_BG],
-      ['system', LIGHT_BG],
+    // One button cycles System → Light → Dark → System; each choice survives a reload.
+    for (const [label, background] of [
+      ['Theme: Light. Switch to Dark', LIGHT_BG],
+      ['Theme: Dark. Switch to System', DARK_BG],
+      ['Theme: System. Switch to Light', LIGHT_BG],
     ] as const) {
-      await theme.selectOption(mode);
+      await theme.click();
       await page.reload();
-      await expect(theme).toHaveValue(mode);
+      await expect(theme).toHaveAccessibleName(label);
       expect(await bodyBackground(page)).toBe(background);
     }
   });
@@ -44,7 +45,9 @@ test.describe('theme behavior', () => {
   test('System mode follows OS light/dark changes live, without a reload', async ({ page }) => {
     await page.emulateMedia({ colorScheme: 'light' });
     await page.goto('/');
-    await expect(page.getByRole('combobox', { name: 'Theme' })).toHaveValue('system');
+    await expect(page.getByRole('button', { name: /^Theme:/ })).toHaveAccessibleName(
+      'Theme: System. Switch to Light',
+    );
     expect(await bodyBackground(page)).toBe(LIGHT_BG);
 
     await page.emulateMedia({ colorScheme: 'dark' });

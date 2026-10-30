@@ -6,7 +6,8 @@ use crate::adapter::exiftool::read::{read_metadata, FileMetadata};
 use crate::adapter::exiftool::resolver::ExifTool;
 use crate::domain::error::{AppError, ErrorKind};
 use crate::service::dependency::{self, ExifToolStatus};
-use crate::service::files::{FileId, FileRegistry, ImportResult, RejectedPath};
+use crate::service::files::{FileId, FileRegistry, ImportResult, ImportedFile, RejectedPath};
+use crate::service::reads::{self, ReadQueue};
 use crate::service::scan::{self, ScanOptions};
 use crate::service::settings::SettingsStore;
 use serde::Serialize;
@@ -19,12 +20,15 @@ use tauri_plugin_dialog::{DialogExt, FilePath};
 pub type SettingsState = Mutex<SettingsStore>;
 pub type FilesState = Mutex<FileRegistry>;
 pub type ScansState = Mutex<Scans>;
+pub type ReadsState = Mutex<ReadQueue>;
 
 /// Folder scans of this session: the options every new scan uses (set from the UI, also used for
 /// dropped folders) and a stop switch per running scan.
 #[derive(Default)]
 pub struct Scans {
     options: ScanOptions,
+    /// The folder last chosen in the dialog, waiting for the user to confirm it with options.
+    picked: Option<PathBuf>,
     running: HashMap<u32, CancelToken>,
     next: u32,
 }
@@ -163,10 +167,57 @@ fn current_tool(app: &AppHandle) -> Result<ExifTool, AppError> {
 }
 
 /// Registers user-chosen paths in the session's [`FileRegistry`].
+/// Registers user-chosen paths and queues the new files for background reading.
 fn register(app: &AppHandle, paths: Vec<PathBuf>) -> Result<ImportResult, AppError> {
-    let state = app.state::<FilesState>();
-    let mut registry = state.lock().map_err(internal)?;
-    Ok(registry.add(paths))
+    let result = {
+        let state = app.state::<FilesState>();
+        let mut registry = state.lock().map_err(internal)?;
+        registry.add(paths)
+    };
+    queue_reads(app, &result.added);
+    Ok(result)
+}
+
+/// Name of the event that carries the background reads' [`reads::ReadUpdate`]s.
+pub const READ_PROGRESS: &str = "read-progress";
+
+/// Queues newly added files for the background read worker and starts it if idle.
+///
+/// Flow: look the paths up in the registry (the IDs were just issued) → [`ReadQueue::enqueue`]
+/// → if no worker runs, start one on the blocking pool that resolves ExifTool once and runs
+/// [`reads::drain`], emitting [`READ_PROGRESS`]. Locks are taken one at a time (files, then
+/// reads), never nested, so this cannot deadlock with the worker.
+fn queue_reads(app: &AppHandle, added: &[ImportedFile]) {
+    if added.is_empty() {
+        return;
+    }
+    let files: Vec<(FileId, PathBuf)> = {
+        let state = app.state::<FilesState>();
+        let registry = state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        added
+            .iter()
+            .filter_map(|file| Some((file.id.clone(), registry.path(&file.id)?.to_path_buf())))
+            .collect()
+    };
+    let start = app
+        .state::<ReadsState>()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .enqueue(files);
+    if !start {
+        return;
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let tool = current_tool(&app).map_err(|error| error.message);
+        reads::drain(&app.state::<ReadsState>(), tool, |update| {
+            if let Err(error) = app.emit_to("main", READ_PROGRESS, update) {
+                eprintln!("could not deliver read progress to the window: {error}");
+            }
+        });
+    });
 }
 
 /// Name of the event that carries a drop's [`ImportResult`] to the renderer.
@@ -200,8 +251,14 @@ fn start_scan(app: &AppHandle, root: PathBuf) -> Result<u32, AppError> {
             &app.state::<FilesState>(),
             scan::UPDATE_INTERVAL,
             |update| {
+                let added = update.added.clone();
                 if let Err(error) = app.emit_to("main", SCAN_PROGRESS, update) {
                     eprintln!("could not deliver scan progress to the window: {error}");
+                }
+                // A cancelled scan's last batch is listed but not checked: Cancel stops both, and
+                // queuing it would start a new read run right after the user stopped the old one.
+                if !cancel.is_cancelled() {
+                    queue_reads(&app, &added);
                 }
             },
         );
@@ -252,17 +309,41 @@ pub fn files_dropped(app: &AppHandle, paths: Vec<PathBuf>) {
     }
 }
 
-/// Lets the user pick a folder and starts scanning it with the current options; `None` if
-/// cancelled. Progress and the added files arrive as [`SCAN_PROGRESS`] events.
+/// Opens the native folder dialog and remembers the choice in Rust, returning its path for
+/// display only; `None` if cancelled (any earlier choice stays). Step one of Add folder: the
+/// user then confirms it with options in ExifBee's dialog ([`scan_picked_folder`]).
+///
+/// Design: the renderer never sends the path back (SEC-008); the scan uses the one kept here.
 #[tauri::command]
-pub async fn add_folder(app: AppHandle) -> Result<Option<u32>, AppError> {
+pub async fn pick_folder(app: AppHandle) -> Result<Option<String>, AppError> {
     blocking(move || {
         let Some(picked) = app.dialog().file().blocking_pick_folder() else {
             return Ok(None);
         };
-        Ok(Some(start_scan(&app, picked_path(picked)?)?))
+        let path = picked_path(picked)?;
+        let shown = path.display().to_string();
+        app.state::<ScansState>().lock().map_err(internal)?.picked = Some(path);
+        Ok(Some(shown))
     })
     .await
+}
+
+/// Step two of Add folder: scans the folder chosen with [`pick_folder`] using `options`, which
+/// also become the session's options (used for dropped folders and shown next time). Returns
+/// the scan ID; progress and files arrive as [`SCAN_PROGRESS`] events. Fails with
+/// `InvalidInput` if no folder was chosen.
+#[tauri::command]
+pub fn scan_picked_folder(app: AppHandle, options: ScanOptions) -> Result<u32, AppError> {
+    let root = {
+        let state = app.state::<ScansState>();
+        let mut scans = state.lock().map_err(internal)?;
+        scans.options = options.normalized();
+        scans
+            .picked
+            .take()
+            .ok_or_else(|| AppError::new(ErrorKind::InvalidInput, "choose a folder first"))?
+    };
+    start_scan(&app, root)
 }
 
 /// Asks a running scan to stop. Its final update (`Cancelled`) follows as an event, with the
@@ -275,18 +356,6 @@ pub fn cancel_scan(scans: State<'_, ScansState>, scan_id: u32) -> Result<bool, A
         .get(&scan_id)
         .map(CancelToken::cancel)
         .is_some())
-}
-
-/// Sets the options for scans started from now on (running scans keep theirs) and returns them
-/// normalized, so the UI shows exactly what is in force.
-#[tauri::command]
-pub fn set_scan_options(
-    scans: State<'_, ScansState>,
-    options: ScanOptions,
-) -> Result<ScanOptions, AppError> {
-    let mut scans = scans.lock().map_err(internal)?;
-    scans.options = options.normalized();
-    Ok(scans.options.clone())
 }
 
 /// Lets the user pick any number of files of any type and adds them to the session; `None` if
@@ -317,6 +386,32 @@ pub async fn add_files(app: AppHandle) -> Result<Option<ImportResult>, AppError>
         Ok(Some(result))
     })
     .await
+}
+
+/// Most IDs `prioritize_reads` accepts: far more rows than fit on any screen, and a bound on
+/// renderer input.
+const MAX_PRIORITY_IDS: usize = 1_000;
+
+/// Reads the given files next if they are still queued (the rows in view, sent by the file list
+/// as it scrolls). Only reorders the queue: unknown IDs are ignored, and no path is involved.
+#[tauri::command]
+pub fn prioritize_reads(reads: State<'_, ReadsState>, ids: Vec<FileId>) -> Result<(), AppError> {
+    if ids.len() > MAX_PRIORITY_IDS {
+        return Err(AppError::new(
+            ErrorKind::InvalidInput,
+            format!("at most {MAX_PRIORITY_IDS} files can be prioritized at once"),
+        ));
+    }
+    let ids = ids.into_iter().collect();
+    reads.lock().map_err(internal)?.prioritize(&ids);
+    Ok(())
+}
+
+/// Stops the background reads: queued files stay unread (selecting one still reads it) and the
+/// final `Cancelled` update follows as an event. Returns `false` if nothing was being read.
+#[tauri::command]
+pub fn cancel_reads(reads: State<'_, ReadsState>) -> Result<bool, AppError> {
+    Ok(reads.lock().map_err(internal)?.cancel())
 }
 
 /// Reads the metadata of a file added in this session.

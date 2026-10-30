@@ -5,7 +5,12 @@ export type FileMetadata = { sourceFile: string,
 /**
  * ExifTool's per-file `Error`; the read still returns whatever ExifTool recognized.
  */
-error: string | null, warnings: Array<string>, 
+error: string | null, 
+/**
+ * The error only says ExifTool does not know this format ([`UNKNOWN_FILE_TYPE`]): an
+ * expected outcome for arbitrary files, shown neutrally rather than as a failure.
+ */
+unsupported: boolean, warnings: Array<string>, 
 /**
  * Every tag in ExifTool's output order, with full identity and typed value.
  */

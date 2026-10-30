@@ -28,7 +28,7 @@ describe('renderer permissions (least privilege)', () => {
     const handler = [
       ...(/generate_handler!\[([^\]]*)\]/.exec(libRs)?.[1] ?? '').matchAll(/commands::(\w+)/g),
     ].map((match) => match[1] ?? '');
-    expect(manifest.length).toBe(9);
+    expect(manifest.length).toBe(11);
     expect(sorted(manifest)).toEqual(sorted(handler));
     expect(sorted(manifest)).toEqual(sorted(COMMAND_NAMES));
 
@@ -41,7 +41,7 @@ describe('renderer permissions (least privilege)', () => {
     };
     expect(capability.windows).toEqual(['main']);
     expect(capability.remote).toBeUndefined();
-    // Only ExifBee's own commands plus listening for events (the files-dropped and scan-progress results, DEC-020/DEC-021):
+    // Only ExifBee's own commands plus listening for events (the files-dropped, scan-progress and read-progress results, DEC-020/DEC-021):
     // no other core:, fs:, shell:, dialog: or plugin permissions, not even emitting events.
     expect(sorted(capability.permissions)).toEqual(
       sorted([

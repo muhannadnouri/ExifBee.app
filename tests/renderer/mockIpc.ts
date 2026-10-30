@@ -46,8 +46,9 @@ const DEFAULT_SCAN_OPTIONS = {
 };
 
 /**
- * Replaces the Tauri bridge before any app script runs. Each Add files… adds the next read as one
- * file; `read_file` answers by ID like the Rust registry; Add folder… starts scan 1, 2, …;
+ * Replaces the Tauri bridge before any app script runs. Each Add → Files… adds the next read as
+ * one file; `read_file` answers by ID like the Rust registry; Add → Folder… picks
+ * /home/user/Photos and confirming it starts scan 1, 2, …;
  * `dropFiles` and `scanUpdate` emit the events Rust would.
  */
 export async function mockIpc(page: Page, reads: MockRead[] = SAMPLE_READS) {
@@ -67,6 +68,8 @@ export async function mockIpc(page: Page, reads: MockRead[] = SAMPLE_READS) {
       };
       let scans = 0;
       const cancelledScans: number[] = [];
+      const readsCancelled: true[] = [];
+      const prioritized: string[][] = [];
       type Args = Record<string, unknown>;
       // Typed against the app's command map, so a new or changed command breaks this mock at compile time.
       const responses: { [K in keyof Commands]: (args: Args) => Commands[K] } = {
@@ -94,9 +97,14 @@ export async function mockIpc(page: Page, reads: MockRead[] = SAMPLE_READS) {
           if (!read) throw { kind: 'ScopeViolation', message: `${String(id)} is not a file` };
           return read as Commands['read_file'];
         },
-        add_folder: () => ++scans,
+        pick_folder: () => '/home/user/Photos',
+        scan_picked_folder: () => ++scans,
         cancel_scan: ({ scanId }) => cancelledScans.push(Number(scanId)) > 0,
-        set_scan_options: ({ options }) => options as Commands['set_scan_options'],
+        cancel_reads: () => readsCancelled.push(true) > 0,
+        prioritize_reads: ({ ids }) => {
+          prioritized.push(ids as string[]);
+          return null;
+        },
       };
       Object.assign(window, {
         __TAURI_INTERNALS__: {
@@ -116,14 +124,27 @@ export async function mockIpc(page: Page, reads: MockRead[] = SAMPLE_READS) {
         },
         __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener: () => undefined },
         __cancelledScans: cancelledScans,
+        __readsCancelled: readsCancelled,
+        __prioritized: prioritized,
+        __mockRead: (update: unknown) => emit('read-progress', update),
         __mockDrop: (dropped: MockRead[], duplicates: string[], rejected: MockRejected[]) =>
           emit('files-dropped', { added: dropped.map(register), duplicates, rejected }),
         __mockScan: (update: MockScanUpdate) =>
-          emit('scan-progress', { ...update, added: update.added.map(register) }),
+          emit('scan-progress', {
+            options: defaultScanOptions,
+            ...update,
+            added: update.added.map(register),
+          }),
       });
     },
     [reads, DEFAULT_SCAN_OPTIONS] as const,
   );
+}
+
+/** Add ▾ → Files… or Folder…, as a pointer user does it. */
+export async function addVia(page: Page, item: 'Files…' | 'Folder…') {
+  await page.getByRole('button', { name: 'Add', exact: true }).click();
+  await page.getByRole('menuitem', { name: new RegExp(`^${item}`) }).click();
 }
 
 /** Simulates files dropped on the window, after Rust registered them. */
@@ -151,6 +172,7 @@ export type MockScanUpdate = {
   added: MockRead[];
   problems: MockRejected[];
   counts: { added: number; duplicates: number; filtered: number; skipped: number };
+  options?: typeof DEFAULT_SCAN_OPTIONS;
 };
 
 /** Simulates one progress update of a folder scan running in Rust. */
@@ -160,6 +182,36 @@ export const scanUpdate = (page: Page, update: MockScanUpdate) =>
       (window as unknown as { __mockScan: (u: MockScanUpdate) => void }).__mockScan(update),
     update,
   );
+
+/** Simulates one background read update from Rust (results name registered IDs: f1, f2, …). */
+export const readUpdate = (page: Page, update: MockReadUpdate) =>
+  page.evaluate(
+    (update) =>
+      (window as unknown as { __mockRead: (u: MockReadUpdate) => void }).__mockRead(update),
+    update,
+  );
+
+export type MockReadUpdate = {
+  state: 'Running' | 'Complete' | 'Cancelled' | 'Failed';
+  results: {
+    id: string;
+    fileType: string | null;
+    error: string | null;
+    unsupported: boolean;
+    warnings: string[];
+    tagCount: number;
+  }[];
+  counts: { done: number; total: number; errors: number; warnings: number; unsupported: number };
+  message: string | null;
+};
+
+/** Each list of file IDs the app asked Rust to check first. */
+export const prioritized = (page: Page) =>
+  page.evaluate(() => (window as unknown as { __prioritized: string[][] }).__prioritized);
+
+/** How many times the app asked Rust to stop reading. */
+export const readsCancelled = (page: Page) =>
+  page.evaluate(() => (window as unknown as { __readsCancelled: true[] }).__readsCancelled.length);
 
 /** Scan IDs the app asked Rust to stop. */
 export const cancelledScans = (page: Page) =>

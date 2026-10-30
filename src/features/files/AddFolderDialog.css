@@ -1,0 +1,40 @@
+.add-folder {
+  display: grid;
+  gap: 0.6rem;
+  min-width: min(28rem, 80vw);
+}
+
+.add-folder-path {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.add-folder-label {
+  color: var(--text-muted);
+}
+
+.add-folder-path output {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+}
+
+.add-folder-filters summary {
+  cursor: pointer;
+}
+
+.add-folder-filters[open] {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.add-folder-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}

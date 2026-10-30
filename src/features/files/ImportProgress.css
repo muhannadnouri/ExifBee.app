@@ -1,0 +1,53 @@
+.import-progress {
+  display: grid;
+  /* One column exactly the card's width, so a long line wraps instead of overflowing. */
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.3rem;
+  margin: 0 0 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border-strong);
+  border-inline-start-width: 4px;
+  border-inline-start-color: var(--accent);
+  border-radius: 4px;
+  background: var(--surface-raised);
+}
+
+.import-progress-warning {
+  border-inline-start-color: var(--warning);
+}
+
+.import-progress-error {
+  border-inline-start-color: var(--danger);
+}
+
+.import-progress p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.import-progress-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.import-progress-head h3 {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 1rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.import-progress-check {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.import-progress progress {
+  inline-size: 100%;
+  block-size: 0.5rem;
+  accent-color: var(--accent);
+}

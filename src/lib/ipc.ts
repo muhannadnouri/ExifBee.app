@@ -6,6 +6,7 @@ import type { AppInfo } from './bindings/AppInfo';
 import type { ExifToolStatus } from './bindings/ExifToolStatus';
 import type { FileMetadata } from './bindings/FileMetadata';
 import type { ImportResult } from './bindings/ImportResult';
+import type { ReadUpdate } from './bindings/ReadUpdate';
 import type { ScanOptions } from './bindings/ScanOptions';
 import type { ScanUpdate } from './bindings/ScanUpdate';
 import { toAppError } from './errors';
@@ -19,6 +20,9 @@ export type {
   ScanOptions,
   ScanUpdate,
 };
+export type { ReadUpdate };
+export type { ReadCounts } from './bindings/ReadCounts';
+export type { ReadSummary } from './bindings/ReadSummary';
 export type { ScanCounts } from './bindings/ScanCounts';
 export type { ScanState } from './bindings/ScanState';
 export type { ImportedFile } from './bindings/ImportedFile';
@@ -41,9 +45,11 @@ export type Commands = {
   reset_exiftool_override: ExifToolStatus;
   add_files: ImportResult | null;
   read_file: FileMetadata;
-  add_folder: number | null;
+  pick_folder: string | null;
+  scan_picked_folder: number;
   cancel_scan: boolean;
-  set_scan_options: ScanOptions;
+  cancel_reads: boolean;
+  prioritize_reads: null;
 };
 
 /** Runtime list of `Commands` keys; the `Record` type keeps it complete. */
@@ -54,9 +60,11 @@ export const COMMAND_NAMES = Object.keys({
   reset_exiftool_override: true,
   add_files: true,
   read_file: true,
-  add_folder: true,
+  pick_folder: true,
+  scan_picked_folder: true,
   cancel_scan: true,
-  set_scan_options: true,
+  cancel_reads: true,
+  prioritize_reads: true,
 } satisfies Record<keyof Commands, true>) as (keyof Commands)[];
 
 /** The only `invoke` call in the app (lint-enforced); rejections always become an `AppError`. */
@@ -79,16 +87,24 @@ export const addFiles = () => call('add_files');
 /** Reads a file added in this session; an ID Rust did not issue is a `ScopeViolation`. */
 export const readFile = (id: string) => call('read_file', { id });
 
-/** Native folder dialog in Rust; starts a scan and returns its ID (`null` when cancelled). */
-export const addFolder = () => call('add_folder');
-/** Asks a scan to stop; `false` if it had already finished. Its final update still arrives. */
+/** Native folder dialog in Rust; Rust keeps the choice and returns its path for display only. */
+export const pickFolder = () => call('pick_folder');
+/** Scans the folder chosen with `pickFolder` with these options (also used for dropped folders). */
+export const scanPickedFolder = (options: ScanOptions) => call('scan_picked_folder', { options });
 export const cancelScan = (scanId: number) => call('cancel_scan', { scanId });
-/** Sets the options for scans started from now on, including dropped folders; returns them normalized. */
-export const setScanOptions = (options: ScanOptions) => call('set_scan_options', { options });
 
 /** Calls `handler` with every folder scan update (new files, problems, running totals, end state). */
 export const onScanProgress = (handler: (update: ScanUpdate) => void) =>
   listen<ScanUpdate>('scan-progress', (event) => handler(event.payload));
+
+/** Stops the background metadata reads; `false` if nothing was being read. */
+export const cancelReads = () => call('cancel_reads');
+/** Checks these files next if they are still queued (the rows in view); unknown IDs are ignored. */
+export const prioritizeReads = (ids: string[]) => call('prioritize_reads', { ids });
+
+/** Calls `handler` with each background read update (per-file summaries and running totals). */
+export const onReadProgress = (handler: (update: ReadUpdate) => void) =>
+  listen<ReadUpdate>('read-progress', (event) => handler(event.payload));
 
 /**
  * Calls `handler` with each drop's import result (dropped paths are registered in Rust, as with

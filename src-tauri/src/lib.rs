@@ -20,6 +20,7 @@ pub fn run() {
             app.manage::<commands::SettingsState>(Mutex::new(SettingsStore::load(&dir)));
             app.manage::<commands::FilesState>(Mutex::default());
             app.manage::<commands::ScansState>(Mutex::default());
+            app.manage::<commands::ReadsState>(Mutex::default());
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -36,9 +37,11 @@ pub fn run() {
             commands::reset_exiftool_override,
             commands::add_files,
             commands::read_file,
-            commands::add_folder,
+            commands::pick_folder,
+            commands::scan_picked_folder,
             commands::cancel_scan,
-            commands::set_scan_options,
+            commands::cancel_reads,
+            commands::prioritize_reads,
         ])
         .run(tauri::generate_context!())
         .expect("error while running ExifBee");

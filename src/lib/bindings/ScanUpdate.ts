@@ -2,6 +2,7 @@
 import type { ImportedFile } from "./ImportedFile";
 import type { RejectedPath } from "./RejectedPath";
 import type { ScanCounts } from "./ScanCounts";
+import type { ScanOptions } from "./ScanOptions";
 import type { ScanState } from "./ScanState";
 
 /**
@@ -12,4 +13,8 @@ export type ScanUpdate = { scanId: number,
 /**
  * The chosen folder, for display.
  */
-root: string, state: ScanState, added: Array<ImportedFile>, problems: Array<RejectedPath>, counts: ScanCounts, };
+root: string, state: ScanState, added: Array<ImportedFile>, problems: Array<RejectedPath>, counts: ScanCounts, 
+/**
+ * The options this scan runs with, so the UI shows the policy actually in force.
+ */
+options: ScanOptions, };

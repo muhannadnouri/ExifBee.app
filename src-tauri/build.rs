@@ -12,9 +12,11 @@ const COMMANDS: &[&str] = &[
     "reset_exiftool_override",
     "add_files",
     "read_file",
-    "add_folder",
+    "pick_folder",
+    "scan_picked_folder",
     "cancel_scan",
-    "set_scan_options",
+    "cancel_reads",
+    "prioritize_reads",
 ];
 
 fn main() {
