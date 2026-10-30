@@ -1,31 +1,38 @@
-import type { FileMetadata } from '../../lib/ipc';
+import type { AppError, FileMetadata, ImportedFile } from '../../lib/ipc';
 import './FilePane.css';
 
-const baseName = (path: string) => path.split('/').pop() || path;
-
 type Props = {
-  files: FileMetadata[];
+  files: ImportedFile[];
+  reads: Record<string, FileMetadata>;
+  failures: Record<string, AppError>;
   selected: string | null;
-  onSelect: (sourceFile: string) => void;
+  onSelect: (file: ImportedFile) => void;
 };
 
-/** Files read in this session; any format is listed, with the full path as its accessible name. */
-export function FilePane({ files, selected, onSelect }: Props) {
-  if (files.length === 0) return <p className="muted">No files yet. Use Add files… to start.</p>;
+/** Files added in this session, any format, with the full path as each one's accessible name. */
+export function FilePane({ files, reads, failures, selected, onSelect }: Props) {
+  if (files.length === 0)
+    return <p className="muted">No files yet. Use Add files… or drop files onto the window.</p>;
   return (
     <ul className="file-list">
       {files.map((file) => {
-        const flag = file.error ? ' (error)' : file.warnings.length > 0 ? ' (warning)' : '';
+        const read = reads[file.id];
+        const flag =
+          failures[file.id] || read?.error
+            ? ' (error)'
+            : read && read.warnings.length > 0
+              ? ' (warning)'
+              : '';
         return (
-          <li key={file.sourceFile}>
+          <li key={file.id}>
             <button
               type="button"
-              aria-label={file.sourceFile + flag}
-              aria-current={file.sourceFile === selected ? 'true' : undefined}
-              title={file.sourceFile}
-              onClick={() => onSelect(file.sourceFile)}
+              aria-label={file.path + flag}
+              aria-current={file.id === selected ? 'true' : undefined}
+              title={file.path}
+              onClick={() => onSelect(file)}
             >
-              {baseName(file.sourceFile)}
+              {file.name}
               {flag && <span className="file-flag">{flag}</span>}
             </button>
           </li>

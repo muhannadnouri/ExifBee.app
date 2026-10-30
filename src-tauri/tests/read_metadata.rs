@@ -28,6 +28,8 @@ fn every_fixture_reads_exactly_like_the_exiftool_cli_without_changing_it() {
         ("hostile.xmp", 0),
         ("palette.png", 0),
         ("numbers.xmp", 0),
+        ("movie.mp4", 0),
+        ("unknown.dat", 1),
     ] {
         let copy = ws.copy(fixture);
         let before = ws.files();

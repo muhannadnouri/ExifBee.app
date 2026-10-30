@@ -209,6 +209,32 @@ function zip() {
   return Buffer.concat([local, central, end]);
 }
 
+/** Minimal ISO base media file: `ftyp` plus a `moov` holding one version-0 `mvhd` (no tracks). */
+function mp4() {
+  const box = (type, ...parts) => {
+    const body = Buffer.concat(parts);
+    return Buffer.concat([be32(body.length + 8), Buffer.from(type, 'latin1'), body]);
+  };
+  const ftyp = box('ftyp', Buffer.from('isom'), be32(0x200), Buffer.from('isommp41'));
+  // Identity matrix (16.16 / 2.30 fixed point); times are 0 so the bytes never depend on the clock.
+  const matrix = [0x10000, 0, 0, 0, 0x10000, 0, 0, 0, 0x40000000].map(be32);
+  const mvhd = box(
+    'mvhd',
+    be32(0), // version 0, no flags
+    be32(0), // creation time
+    be32(0), // modification time
+    be32(1000), // timescale
+    be32(0), // duration
+    be32(0x10000), // rate 1.0
+    Buffer.from([0x01, 0x00]), // volume 1.0
+    Buffer.alloc(10),
+    ...matrix,
+    Buffer.alloc(24),
+    be32(1), // next track ID
+  );
+  return Buffer.concat([ftyp, box('moov', mvhd)]);
+}
+
 /** Markup an attacker could plant in metadata; ExifTool returns it decoded (SEC-003, S1-T06). */
 export const HOSTILE_TITLE =
   '<img src=x onerror="window.__pwned=1"><script>window.__pwned=2</script>';
@@ -243,6 +269,9 @@ export function fixtures() {
     { name: 'hostile.xmp', bytes: Buffer.from(HOSTILE_XMP, 'utf8') },
     { name: 'palette.png', bytes: palettePng() },
     { name: 'numbers.xmp', bytes: Buffer.from(NUMBERS_XMP, 'utf8') },
+    { name: 'movie.mp4', bytes: mp4() },
+    // Bytes no format starts with, so ExifTool reports an unknown file type.
+    { name: 'unknown.dat', bytes: Buffer.from('EXIFBEE?\x00\x01 not a known format\n', 'latin1') },
   ];
 }
 

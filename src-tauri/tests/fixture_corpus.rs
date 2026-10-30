@@ -84,6 +84,15 @@ const EXPECTED: &[(&str, &[&str])] = &[
             "-XMP-dc:Format=1e3",
         ],
     ),
+    (
+        "movie.mp4",
+        &[
+            "-File:FileType=MP4",
+            "-QuickTime:CompatibleBrands=isom, mp41",
+            "-QuickTime:TimeScale=1000",
+        ],
+    ),
+    ("unknown.dat", &["-ExifTool:Error=Unknown file type"]),
 ];
 
 fn read_args(exiftool: &Path, file: &Path) -> Vec<String> {
@@ -127,7 +136,7 @@ fn generated_fixtures_carry_their_known_metadata() {
             );
         }
         // Healthy fixtures must parse cleanly; only the deliberately broken ones may report problems.
-        if !matches!(name, "empty.bin" | "truncated.jpg") {
+        if !matches!(name, "empty.bin" | "truncated.jpg" | "unknown.dat") {
             let problems: Vec<_> = actual
                 .iter()
                 .filter(|l| l.starts_with("-ExifTool:Error") || l.starts_with("-ExifTool:Warning"))

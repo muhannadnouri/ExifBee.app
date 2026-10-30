@@ -1,7 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
-import { mockIpc, savedTheme } from './mockIpc';
+import { dropFiles, mockIpc, savedTheme } from './mockIpc';
 
 // WCAG 2.2 A/AA rules, checked in a real browser so contrast and layout rules apply.
 const audit = async (page: Page) => {
@@ -28,13 +28,15 @@ for (const mode of ['light', 'dark'] as const) {
       expect(await audit(page)).toEqual([]);
     });
 
-    test('populated workbench with errors, warnings and open drawers has no violations', async ({
+    test('populated workbench with errors, warnings, a skip notice and open drawers has no violations', async ({
       page,
     }) => {
       await page.goto('/');
       const add = page.getByRole('button', { name: 'Add files…' });
       await add.click();
       await add.click();
+      await dropFiles(page, [], ['/home/user/Pictures/IMG_0042.jpg']);
+      await expect(page.getByRole('button', { name: 'Dismiss' })).toBeVisible();
       await page.getByRole('button', { name: /Actions/ }).click();
       await page.getByRole('button', { name: /Log/ }).click();
       await expect(page.getByRole('log')).toContainText('IMG_0042.jpg');

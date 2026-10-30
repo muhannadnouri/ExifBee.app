@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useEffectEvent, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { Button } from '../components/atoms/Button';
 import { Notice } from '../components/atoms/Notice';
@@ -11,8 +11,15 @@ import { SettingsDialog } from '../features/settings/SettingsDialog';
 import { ThemeSwitcher } from '../features/settings/ThemeSwitcher';
 import { ErrorNotice } from '../components/ErrorNotice';
 import { toAppError } from '../lib/errors';
-import { appInfo, exiftoolStatus, readSelectedFile } from '../lib/ipc';
-import type { AppError, AppInfo, ExifToolStatus, FileMetadata } from '../lib/ipc';
+import { addFiles, appInfo, exiftoolStatus, onFilesDropped, readFile } from '../lib/ipc';
+import type {
+  AppError,
+  AppInfo,
+  ExifToolStatus,
+  FileMetadata,
+  ImportResult,
+  ImportedFile,
+} from '../lib/ipc';
 import './App.css';
 
 export type Layout = {
@@ -67,11 +74,17 @@ const statusFailure = (error: unknown): ExifToolStatus => ({
 
 type LogEntry = { id: number; level: 'info' | 'warning' | 'error'; message: string };
 
+const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+
 export function App() {
-  const [files, setFiles] = useState<FileMetadata[]>([]);
+  const [files, setFiles] = useState<ImportedFile[]>([]);
+  // Reads and read failures by file ID; a file is read the first time it is selected.
+  const [reads, setReads] = useState<Record<string, FileMetadata>>({});
+  const [failures, setFailures] = useState<Record<string, AppError>>({});
   const [selected, setSelected] = useState<string | null>(null);
-  const [failure, setFailure] = useState<AppError | null>(null);
-  const [reading, setReading] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importFailure, setImportFailure] = useState<AppError | null>(null);
+  const [skipped, setSkipped] = useState<ImportResult | null>(null);
   const [log, setLog] = useState<LogEntry[]>([]);
   const [layout, setLayout] = useState(loadLayout);
   const [status, setStatus] = useState('');
@@ -81,6 +94,7 @@ export function App() {
   const [dependency, setDependency] = useState<ExifToolStatus | null>(null);
   const [warningDismissed, setWarningDismissed] = useState(false);
   const nextLogId = useRef(1);
+  const readsInFlight = useRef(new Set<string>());
 
   useEffect(() => {
     try {
@@ -118,41 +132,82 @@ export function App() {
   const addLog = (level: LogEntry['level'], message: string) =>
     setLog((entries) => [...entries, { id: nextLogId.current++, level, message }]);
 
-  const addFiles = async () => {
-    if (reading) return;
-    setReading(true);
-    setStatus('Reading…');
+  const refreshDependency = () =>
+    void exiftoolStatus()
+      .then(setDependency)
+      .catch((error: unknown) => setDependency(statusFailure(error)));
+
+  /** Selects a file and reads it unless it was already read; a failed read is retried. */
+  const inspect = async ({ id, path, name }: ImportedFile) => {
+    setSelected(id);
+    if (reads[id] || readsInFlight.current.has(id)) return;
+    readsInFlight.current.add(id);
+    setFailures((current) =>
+      Object.fromEntries(Object.entries(current).filter(([failed]) => failed !== id)),
+    );
+    // Announced politely by the status live region; errors also use role="alert".
+    setStatus(`Reading ${name}…`);
     try {
-      const file = await readSelectedFile();
-      if (!file) {
-        setStatus('');
-        return;
-      }
-      setFiles((current) => [
-        ...current.filter((existing) => existing.sourceFile !== file.sourceFile),
-        file,
-      ]);
-      setSelected(file.sourceFile);
-      setFailure(null);
-      // Announced politely by the status live region; errors also use role="alert".
-      const name = file.sourceFile.split('/').pop() ?? file.sourceFile;
-      setStatus(file.error ? `Could not fully read ${name}` : `Read ${name}`);
-      if (file.error) addLog('error', `${file.sourceFile}: ${file.error}`);
-      else addLog('info', `Read ${file.sourceFile}`);
-      for (const warning of file.warnings) addLog('warning', `${file.sourceFile}: ${warning}`);
+      const read = await readFile(id);
+      setReads((current) => ({ ...current, [id]: read }));
+      setStatus(read.error ? `Could not fully read ${name}` : `Read ${name}`);
+      if (read.error) addLog('error', `${path}: ${read.error}`);
+      else addLog('info', `Read ${path}`);
+      for (const warning of read.warnings) addLog('warning', `${path}: ${warning}`);
     } catch (error) {
       const appError = toAppError(error);
-      setFailure(appError);
-      setStatus('Read failed');
+      setFailures((current) => ({ ...current, [id]: appError }));
+      setStatus(`Could not read ${name}`);
       // A read can fail because ExifTool went missing; refresh the dependency banner.
-      void exiftoolStatus()
-        .then(setDependency)
-        .catch((error: unknown) => setDependency(statusFailure(error)));
-      addLog('error', `${appError.kind}: ${appError.message}`);
+      refreshDependency();
+      addLog('error', `${path}: ${appError.kind}: ${appError.message}`);
     } finally {
-      setReading(false);
+      readsInFlight.current.delete(id);
     }
   };
+
+  /** Shows what one dialog selection or drop added, skipped and refused; inspects the first new file. */
+  const handleImport = (result: ImportResult) => {
+    const { added, duplicates, rejected } = result;
+    setFiles((current) => [...current, ...added]);
+    setImportFailure(null);
+    setSkipped(duplicates.length + rejected.length > 0 ? result : null);
+    if (added.length > 0) addLog('info', `Added ${plural(added.length, 'file', 'files')}`);
+    for (const path of duplicates) addLog('warning', `Already in the list, skipped: ${path}`);
+    for (const { path, reason } of rejected) addLog('warning', `Not added: ${path}: ${reason}`);
+    const [first] = added;
+    if (first) void inspect(first);
+    else setStatus('No files added');
+  };
+
+  const chooseFiles = async () => {
+    if (importing) return;
+    setImporting(true);
+    try {
+      const result = await addFiles();
+      if (result) handleImport(result);
+    } catch (error) {
+      const appError = toAppError(error);
+      setImportFailure(appError);
+      setStatus('Adding files failed');
+      addLog('error', `Add files: ${appError.kind}: ${appError.message}`);
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  // Drops are registered in Rust; only their results arrive here (DEC-020).
+  const onDrop = useEffectEvent(handleImport);
+  useEffect(() => {
+    const stop = onFilesDropped((result) => onDrop(result)).catch((error: unknown) => {
+      const { kind, message } = toAppError(error);
+      setLog((entries) => [
+        ...entries,
+        { id: nextLogId.current++, level: 'error', message: `Drag and drop: ${kind}: ${message}` },
+      ]);
+    });
+    return () => void stop.then((unlisten) => unlisten?.());
+  }, []);
 
   // Global shortcuts are listed in app/shortcuts.ts; a modal dialog suspends them.
   useEffect(() => {
@@ -160,7 +215,7 @@ export function App() {
       if (shortcutsOpen || settingsOpen) return;
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'o') {
         event.preventDefault();
-        void addFiles();
+        void chooseFiles();
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -168,7 +223,8 @@ export function App() {
   });
 
   const drawerOpen = layout.actionsOpen || layout.logOpen;
-  const file = files.find((candidate) => candidate.sourceFile === selected) ?? null;
+  const file = selected ? (reads[selected] ?? null) : null;
+  const failure = selected ? (failures[selected] ?? null) : null;
   const style = {
     '--files-width': `${layout.filesWidth}px`,
     '--drawer-height': `${layout.drawerHeight}px`,
@@ -180,8 +236,8 @@ export function App() {
         <h1 className="app-name">ExifBee</h1>
         <div role="toolbar" aria-label="Main toolbar" className="toolbar-actions">
           <Button
-            onClick={addFiles}
-            disabled={reading}
+            onClick={chooseFiles}
+            disabled={importing}
             aria-keyshortcuts="Control+O"
             title="Add files (Ctrl+O)"
           >
@@ -203,7 +259,26 @@ export function App() {
       <div className="workspace">
         <section className="pane files-pane" id="files-pane" aria-labelledby="files-title">
           <h2 id="files-title">Files</h2>
-          <FilePane files={files} selected={selected} onSelect={setSelected} />
+          {importFailure && <ErrorNotice error={importFailure} />}
+          {skipped && (
+            <Notice
+              tone="warning"
+              actions={<Button onClick={() => setSkipped(null)}>Dismiss</Button>}
+            >
+              {skipped.duplicates.length > 0 &&
+                `Skipped ${plural(skipped.duplicates.length, 'file', 'files')} already in the list. `}
+              {skipped.rejected.length > 0 &&
+                `${plural(skipped.rejected.length, 'item was', 'items were')} not added. `}
+              The Log lists each one.
+            </Notice>
+          )}
+          <FilePane
+            files={files}
+            reads={reads}
+            failures={failures}
+            selected={selected}
+            onSelect={(entry) => void inspect(entry)}
+          />
         </section>
         <Splitter
           label="Resize files pane"
@@ -234,7 +309,7 @@ export function App() {
               {info.settingsWarning}
             </Notice>
           )}
-          <MetadataInspector file={file} failure={failure} reading={reading} />
+          <MetadataInspector file={file} failure={failure} reading={selected !== null} />
         </section>
       </div>
 

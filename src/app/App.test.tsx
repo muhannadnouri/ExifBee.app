@@ -1,19 +1,21 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { act, cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { tagsOf } from '../../tests/support/tags';
-import type { ExifToolStatus, FileMetadata } from '../lib/ipc';
+import type { ExifToolStatus, FileMetadata, ImportResult, ImportedFile } from '../lib/ipc';
 import { App, DEFAULT_LAYOUT, FILES_WIDTH, LAYOUT_KEY, loadLayout } from './App';
 
 const ipc = vi.hoisted(() => ({
-  readSelectedFile: vi.fn(),
+  addFiles: vi.fn(),
+  readFile: vi.fn(),
+  onFilesDropped: vi.fn(),
   appInfo: vi.fn(),
   exiftoolStatus: vi.fn(),
   chooseExiftoolOverride: vi.fn(),
   resetExiftoolOverride: vi.fn(),
 }));
-const { readSelectedFile } = ipc;
+const { addFiles, readFile } = ipc;
 vi.mock('../lib/ipc', () => ipc);
 
 const healthy: ExifToolStatus = {
@@ -42,11 +44,38 @@ const file = (sourceFile: string, extra: Partial<FileMetadata> = {}): FileMetada
   ...extra,
 });
 
+/** A file as Rust registers it; tests use the path as its ID. */
+const entry = (path: string): ImportedFile => ({
+  id: path,
+  name: path.split('/').pop() ?? path,
+  path,
+});
+const imported = (paths: string[], extra: Partial<ImportResult> = {}): ImportResult => ({
+  added: paths.map(entry),
+  duplicates: [],
+  rejected: [],
+  ...extra,
+});
+/** Reads answered by ID; an ID without a read rejects like an unknown one in Rust. */
+const answerReads = (reads: FileMetadata[]) =>
+  readFile.mockImplementation(async (id: string) => {
+    const read = reads.find((candidate) => candidate.sourceFile === id);
+    if (!read) throw { kind: 'ScopeViolation', message: `${id} is not a file` };
+    return read;
+  });
+const unlisten = vi.fn();
+let dropHandler: (result: ImportResult) => void = () => undefined;
+
 beforeEach(() => {
   localStorage.clear();
   Object.values(ipc).forEach((mock) => mock.mockReset());
+  unlisten.mockReset();
   ipc.appInfo.mockResolvedValue({ version: '0.1.0', settingsWarning: null });
   ipc.exiftoolStatus.mockResolvedValue(healthy);
+  ipc.onFilesDropped.mockImplementation(async (handler: typeof dropHandler) => {
+    dropHandler = handler;
+    return unlisten;
+  });
 });
 afterEach(cleanup);
 
@@ -56,7 +85,9 @@ describe('application shell', () => {
     render(<App />);
     expect(screen.getByRole('toolbar', { name: 'Main toolbar' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Add files…' })).toBeTruthy();
-    expect(screen.getByRole('region', { name: 'Files' }).textContent).toContain('No files yet');
+    expect(screen.getByRole('region', { name: 'Files' }).textContent).toContain(
+      'drop files onto the window',
+    );
     expect(screen.getByRole('region', { name: 'Metadata' }).textContent).toContain('Ctrl+O');
     expect(screen.getByRole('button', { name: /Actions/ }).getAttribute('aria-expanded')).toBe(
       'false',
@@ -64,60 +95,129 @@ describe('application shell', () => {
     expect(screen.getByRole('button', { name: /Log/ }).getAttribute('aria-expanded')).toBe('false');
   });
 
-  it('adds read files to the files pane, inspects the selected one and logs the outcome', async () => {
+  it('adds files, reads each one when inspected, skips duplicates with a notice and logs it all', async () => {
     const user = userEvent.setup();
-    readSelectedFile
-      .mockResolvedValueOnce(file('/photos/a.jpg'))
-      .mockResolvedValueOnce(file('/docs/b.pdf', { error: 'File format error' }))
-      .mockResolvedValueOnce(file('/photos/a.jpg'));
+    addFiles
+      .mockResolvedValueOnce(imported(['/photos/a.jpg']))
+      .mockResolvedValueOnce(imported(['/docs/b.pdf']))
+      .mockResolvedValueOnce(imported([], { duplicates: ['/photos/a.jpg'] }));
+    answerReads([file('/photos/a.jpg'), file('/docs/b.pdf', { error: 'File format error' })]);
     render(<App />);
 
     for (let i = 0; i < 3; i++)
       await user.click(screen.getByRole('button', { name: 'Add files…' }));
 
-    const files = within(screen.getByRole('region', { name: 'Files' }));
-    // Re-adding the same path does not duplicate it.
-    expect(files.getAllByRole('button').map((button) => button.getAttribute('aria-label'))).toEqual(
-      ['/docs/b.pdf (error)', '/photos/a.jpg'],
+    const pane = screen.getByRole('region', { name: 'Files' });
+    const files = within(pane);
+    // The duplicate is not listed twice; the notice says so.
+    expect(files.getAllByRole('listitem').map((item) => item.textContent)).toEqual([
+      'a.jpg',
+      'b.pdf (error)',
+    ]);
+    expect(within(pane).getByRole('status').textContent).toContain(
+      'Skipped 1 file already in the list.',
     );
     const metadata = screen.getByRole('region', { name: 'Metadata' });
-    expect(within(metadata).getByRole('table').textContent).toContain('/photos/a.jpg');
-    // Hostile values render as text only.
-    expect(metadata.innerHTML).not.toContain('<img');
-
-    await user.click(files.getByRole('button', { name: '/docs/b.pdf (error)' }));
     expect(within(metadata).getByRole('alert').textContent).toBe(
       'ExifTool error: File format error',
     );
 
+    await user.click(files.getByRole('button', { name: '/photos/a.jpg' }));
+    expect(within(metadata).getByRole('table').textContent).toContain('/photos/a.jpg');
+    // Hostile values render as text only.
+    expect(metadata.innerHTML).not.toContain('<img');
+    // Already read: selecting again does not run ExifTool again.
+    expect(readFile).toHaveBeenCalledTimes(2);
+
+    await user.click(files.getByRole('button', { name: 'Dismiss' }));
+    expect(within(pane).queryByRole('status')).toBeNull();
+
     await user.click(screen.getByRole('button', { name: /Log/ }));
-    expect(screen.getByRole('log').textContent).toContain('error: /docs/b.pdf: File format error');
     // Newest event first.
     expect(
       within(screen.getByRole('log'))
         .getAllByRole('listitem')
         .map((item) => item.textContent),
     ).toEqual([
-      'info: Read /photos/a.jpg',
+      'warning: Already in the list, skipped: /photos/a.jpg',
       'error: /docs/b.pdf: File format error',
+      'info: Added 1 file',
       'info: Read /photos/a.jpg',
+      'info: Added 1 file',
     ]);
   });
 
-  it('reports a failed read instead of failing silently, and a cancelled dialog changes nothing', async () => {
+  it('lists dropped files of every kind, reports what was refused and stops listening on unmount', async () => {
     const user = userEvent.setup();
-    readSelectedFile.mockResolvedValueOnce(null).mockRejectedValueOnce({
+    const paths = ['/m/photo.jpg', '/m/report.pdf', '/m/movie.mp4', '/m/archive.zip', '/m/unknown'];
+    answerReads(paths.map((path) => file(path)));
+    const { unmount } = render(<App />);
+    await vi.waitFor(() => expect(ipc.onFilesDropped).toHaveBeenCalledOnce());
+
+    act(() =>
+      dropHandler(
+        imported(paths, {
+          duplicates: ['/m/old.jpg'],
+          rejected: [{ path: '/m/folder', reason: 'folders cannot be added yet' }],
+        }),
+      ),
+    );
+    const files = within(screen.getByRole('region', { name: 'Files' }));
+    expect(files.getAllByRole('listitem').map((item) => item.textContent)).toEqual([
+      'photo.jpg',
+      'report.pdf',
+      'movie.mp4',
+      'archive.zip',
+      'unknown',
+    ]);
+    expect(files.getByRole('status').textContent).toBe(
+      'Skipped 1 file already in the list. 1 item was not added. The Log lists each one.Dismiss',
+    );
+    // The first new file is inspected right away.
+    await within(screen.getByRole('region', { name: 'Metadata' })).findByRole('table');
+    expect(readFile).toHaveBeenCalledWith('/m/photo.jpg');
+
+    await user.click(screen.getByRole('button', { name: /Log/ }));
+    expect(screen.getByRole('log').textContent).toContain(
+      'warning: Not added: /m/folder: folders cannot be added yet',
+    );
+    unmount();
+    await vi.waitFor(() => expect(unlisten).toHaveBeenCalledOnce());
+  });
+
+  it('reports failed reads and imports instead of failing silently, and retries a failed read', async () => {
+    const user = userEvent.setup();
+    addFiles
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(imported(['/a.jpg']))
+      .mockRejectedValueOnce({ kind: 'Internal', message: 'registry lock poisoned' });
+    readFile.mockRejectedValueOnce({
       kind: 'DependencyMissing',
       message: 'ExifTool was not found. Install it using your Linux package manager.',
     });
     render(<App />);
 
+    // A cancelled dialog changes nothing.
     await user.click(screen.getByRole('button', { name: 'Add files…' }));
     expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.getByRole('region', { name: 'Files' }).textContent).toContain('No files yet');
 
     await user.keyboard('{Control>}o{/Control}');
-    expect(screen.getByRole('alert').textContent).toContain('ExifTool was not found');
+    const metadata = screen.getByRole('region', { name: 'Metadata' });
+    expect((await within(metadata).findByRole('alert')).textContent).toContain(
+      'ExifTool was not found',
+    );
+    const files = within(screen.getByRole('region', { name: 'Files' }));
+    expect(files.getByRole('button', { name: '/a.jpg (error)' })).toBeTruthy();
+
+    // After fixing ExifTool, selecting the file again reads it again.
+    answerReads([file('/a.jpg')]);
+    await user.click(files.getByRole('button', { name: '/a.jpg (error)' }));
+    await within(metadata).findByRole('table');
+    expect(within(metadata).queryByRole('alert')).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: 'Add files…' }));
+    expect(files.getByRole('alert').textContent).toContain('registry lock poisoned');
   });
 });
 
@@ -172,7 +272,10 @@ describe('resizing and layout persistence', () => {
 describe('keyboard navigation and focus', () => {
   it('keeps focus on the control used when drawers open, close and panes change', async () => {
     const user = userEvent.setup();
-    readSelectedFile.mockResolvedValueOnce(file('/a.jpg')).mockResolvedValueOnce(file('/b.jpg'));
+    addFiles
+      .mockResolvedValueOnce(imported(['/a.jpg']))
+      .mockResolvedValueOnce(imported(['/b.jpg']));
+    answerReads([file('/a.jpg'), file('/b.jpg')]);
     render(<App />);
     await user.click(screen.getByRole('button', { name: 'Add files…' }));
     await user.click(screen.getByRole('button', { name: 'Add files…' }));

@@ -1,13 +1,16 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "The only window: ExifBee's own commands and nothing else. No core, shell, filesystem or dialog plugin permissions; Rust opens dialogs and runs ExifTool itself (SEC-008).",
+  "description": "The only window: ExifBee's own commands plus listening for the files-dropped event. No shell, filesystem or dialog plugin permissions; Rust opens dialogs, receives drops and runs ExifTool itself (SEC-008, DEC-020).",
   "windows": ["main"],
   "permissions": [
     "allow-app-info",
     "allow-exiftool-status",
     "allow-choose-exiftool-override",
     "allow-reset-exiftool-override",
-    "allow-read-selected-file"
+    "allow-add-files",
+    "allow-read-file",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
   ]
 }

@@ -6,25 +6,35 @@ pub mod service;
 
 use service::settings::SettingsStore;
 use std::sync::Mutex;
-use tauri::Manager;
+use tauri::{DragDropEvent, Manager, WindowEvent};
 
 /// Builds and runs the app. Startup flow: register the dialog plugin (used from Rust only; no
 /// capability grants it to the renderer) → load settings from the OS config dir into managed
-/// state (never fails; see `SettingsStore::load`) → expose the narrow command set (SEC-008).
+/// state (never fails; see `SettingsStore::load`) and start an empty file registry → hand file
+/// drops to `commands::files_dropped` → expose the narrow command set (SEC-008).
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let dir = app.path().app_config_dir()?;
             app.manage::<commands::SettingsState>(Mutex::new(SettingsStore::load(&dir)));
+            app.manage::<commands::FilesState>(Mutex::default());
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let WindowEvent::DragDrop(DragDropEvent::Drop { paths, .. }) = event {
+                let (app, paths) = (window.app_handle().clone(), paths.clone());
+                // Off the event loop: checking thousands of dropped paths must not freeze the window.
+                tauri::async_runtime::spawn_blocking(move || commands::files_dropped(&app, paths));
+            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::app_info,
             commands::exiftool_status,
             commands::choose_exiftool_override,
             commands::reset_exiftool_override,
-            commands::read_selected_file,
+            commands::add_files,
+            commands::read_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running ExifBee");

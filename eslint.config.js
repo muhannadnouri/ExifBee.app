@@ -25,6 +25,10 @@ export default tseslint.config(
         {
           paths: [
             { name: '@tauri-apps/api/core', message: 'Call Rust only through src/lib/ipc.ts.' },
+            {
+              name: '@tauri-apps/api/event',
+              message: 'Listen to Rust only through src/lib/ipc.ts.',
+            },
           ],
         },
       ],

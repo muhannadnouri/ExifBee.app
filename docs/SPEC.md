@@ -1,6 +1,6 @@
 ---
 title: ExifBee — Software Design & Delivery Specification
-spec_version: 1.0.19
+spec_version: 1.0.20
 status: approved-baseline-for-implementation
 created: 2026-10-28
 product: ExifBee
@@ -89,7 +89,7 @@ For every task:
 
 ### 0.5 Versioning and change control
 
-- This is **SDD v1.0.19** (v1.0.0 was the initial implementation baseline). Product release versioning is independent (start application releases at `0.x`).
+- This is **SDD v1.0.20** (v1.0.0 was the initial implementation baseline). Product release versioning is independent (start application releases at `0.x`).
 - Spec `PATCH`: clarifications or test links without behavior change. `MINOR`: additive requirements/tasks. `MAJOR`: materially changed behavior, security guarantees, scope, or compatibility.
 - Record important decisions in the **Decision log (§18)** with date, ID, rationale, tradeoff, and replacement when superseded; don't introduce separate ADR Markdown files.
 - CI validates frontmatter, unique IDs, valid status syntax, task/gate references, and test references. A machine report is generated on demand rather than maintained manually.
@@ -690,7 +690,7 @@ Record hardware/OS, ExifTool version, cold/warm cache, file sizes, throughput, p
 
 **Goal:** A fast, general-purpose metadata browser with zero write risk.
 
-- [ ] **S3-T01 — File import.** Use native file picker and drag/drop; stable opaque file IDs; allow mixed extensions and repeated selections; skip duplicate paths with clear notice. **Acceptance:** JPEG + PDF + MP4 + ZIP + unknown file can be selected together; paths with Unicode/quotes/leading hyphens work; no arbitrary WebView filesystem permission. **Evidence:** `FR-003`, `SEC-008`, `NFR-005`.
+- [x] **S3-T01 — File import.** *(2026-10-29, `feature/linux-mvp`: maintainer verified in `npm run dev` that multi-select and drag-and-drop work and that a dropped folder is refused with a notice; snapshot baselines regenerated and reviewed. Rust session registry with opaque IDs, canonical-path dedup and refusal of folders/FIFOs/devices/missing/relative paths; `add_files` and Rust-side drops both register, `read_file(id)` refuses unissued IDs (DEC-020). Tier 3 with real ExifTool: JPEG + PDF + MP4 + ZIP + unknown file imported together under leading-hyphen, quoted, Unicode, emoji and `$(…)` names, each read identically to the CLI with copies unchanged; duplicate test fails when dedup uses raw paths. Tier 1–2: capability audit (app commands plus `core:event` listen/unlisten only), IPC contract, shell import/notice/retry flows. Tier 4: dropped mixed files listed and inspected by ID; axe audit of the skip notice. Open: drop delivery is verified natively by hand only (native E2E is S3-T07); batched reads are S3-T03; folders are S3-T02; CI run deferred by the maintainer.)* Use native file picker and drag/drop; stable opaque file IDs; allow mixed extensions and repeated selections; skip duplicate paths with clear notice. **Acceptance:** JPEG + PDF + MP4 + ZIP + unknown file can be selected together; paths with Unicode/quotes/leading hyphens work; no arbitrary WebView filesystem permission. **Evidence:** `FR-003`, `SEC-008`, `NFR-005`.
 - [ ] **S3-T02 — Directory scan and enumeration.** Scan selected folder asynchronously and incrementally, with counts, stop control, symlink loop detection, hidden/file filter options and user-selected recursion. **Acceptance:** 10k-entry fixture remains interactive; symlink cycle does not hang; outside-root symlink policy is visible (default do not follow); canceled scan produces honest partial status. **Evidence:** `FR-004`, `FR-021`, `NFR-001`.
 - [ ] **S3-T03 — Metadata read jobs.** Batch reads, identify each `SourceFile` and warnings, incrementally publish events/results, and avoid holding entire corpus in a single JSON object. **Acceptance:** A read-only fixture and non-image fixture display meaningful groups; individual corrupt file does not hide healthy files; no unbounded buffers. **Evidence:** `FR-005`, `FR-017`, `NFR-002`.
 - [ ] **S3-T04 — Inspector and search.** Group tree, tag name/source/value, full-text tag search, group/reader/writability filters, sort, copy to clipboard, empty and unsupported states. **Acceptance:** Users can find group-qualified values in a large set and distinguish duplicate names/read-only tags; no photo-centric labels. **Evidence:** `FR-006`, `UX-006`, `TST-003`.
@@ -1222,35 +1222,4 @@ An AI agent may mark a stage complete only after **all** stage task criteria, te
 | DEC-017 | 2026-10-29 | Renderer E2E tier uses plain `@playwright/test` (Chromium, mocked Tauri bridge) with two projects: `behavior` (runs anywhere) and `snapshots` (pixel baselines generated and compared only in the pinned `mcr.microsoft.com/playwright` image, locally via Docker and in CI); the served app is a production build (`vite preview`) | Spec allowed WebdriverIO browser mode or Playwright; Playwright has first-class screenshot comparison, auto-waiting and request routing (used to prove theme pre-paint); pinned container makes fonts and browser identical between machines; production build loads CSS as `<link>` like the packaged app. Not chosen: `tauri-plugin-playwright` and `tauri-pilot` drive the real webview through an in-app control server, so they compete for the native tier and are evaluated at S3-T07, not here. The mock replaces Tauri internals (`window.__TAURI_INTERNALS__`); move it onto the S1-T05 typed IPC seam when that lands | Active |
 | DEC-018 | 2026-10-29 | Typed IPC: payload and error types are generated from Rust by `ts-rs` 12 (dev-dependency only, exported on `cargo test` into `src/lib/bindings/`, committed, CI fails on drift); command names/results live in one `Commands` map in `src/lib/ipc.ts`, the only module allowed to import `invoke` (ESLint `no-restricted-imports`), and a test compares it with `generate_handler!`. All nine `ErrorKind`s exist in Rust now; `src/lib/errors.ts` maps each to a title and hint via `Record<ErrorKind, …>` | `tauri-specta` would also generate the call functions but is still a 2.0 release candidate for Tauri v2; `ts-rs` is stable and keeps nothing extra in the release binary. Exhaustive `Record` types plus the drift tests make a new command or error kind fail the build until both sides agree. Reserved kinds (`ScopeViolation`, `Cancelled`, `PartialFailure`, `VerificationMismatch`) are defined now so later tasks only start raising them. The Playwright mock still replaces `window.__TAURI_INTERNALS__` (no in-app test seam is added), but is typed against `Commands` | Active |
 | DEC-019 | 2026-10-29 | Metadata reads use `-json -a -G1:4 -s -struct -api StructFormat=JSONQ -- <file>` without `-b`, parsed into the typed model in `domain/metadata.rs` (`TagEntry` with key/group1/copy/name; `MetadataValue` = text, list, structure or binary-with-size) | ExifTool leaves number-looking values unquoted, so `13.50`/`1e3` would be rounded or expanded by any JSON parser; JSONQ quotes every value so text is exact. `-struct` keeps XMP structures nested instead of flattened. `-b` would base64-encode non-UTF-8 text exactly but also dump every embedded preview/thumbnail, so it is reserved for on-demand single-tag extraction (S6-T04). Known upstream limit: without `-b`, ExifTool replaces invalid UTF-8 bytes in text values with `?`, so such values are display-only and must not be written back from their displayed text (S4 must re-read with `-b` before editing them). Parser rejects bare JSON numbers/bools/nulls, malformed keys, more than 100,000 tags per file and nesting deeper than 32 | Active |
-
-**To record a future decision:** add a row with a new `DEC-###` ID, date, adopted choice, tradeoff and supersession reference; edit relevant requirement, task and tests together. Do not erase a superseded decision or create a separate `.md` ADR file.
-
----
-
-## 19. Authoritative external references (implementation documentation, not copied specs)
-
-Use official upstream sources when implementing or updating behaviors. APIs and versions may evolve; **verify these against the pinned dependency versions** and add integration tests rather than assuming doc examples will always hold.
-
-- ExifTool official homepage and file support matrix: https://exiftool.org/
-- ExifTool official installation instructions and Windows companion-file requirements: https://exiftool.org/install.html
-- ExifTool application options and read/write/backup/advanced argument semantics: https://exiftool.org/exiftool_pod.html
-- ExifTool tag tables, descriptions and read/write capability: https://exiftool.org/TagNames/
-- Tauri v2 sidecar/external executable bundling: https://v2.tauri.app/develop/sidecar/
-- Tauri v2 testing guidance: https://v2.tauri.app/develop/tests/
-- Tauri v2 security and plugin permission guidance: https://v2.tauri.app/learn/security/using-plugin-permissions/
-- Tauri v2 filesystem plugin behavior: https://v2.tauri.app/plugin/file-system/
-- Tauri v2 dialog plugin: https://v2.tauri.app/plugin/dialog/
-- WebdriverIO Tauri service (verify support and version before use): https://webdriver.io/docs/tauri-service/
-- ExifToolGUI historic external ExifTool dependency model: https://exiftool.org/gui/index.html
-
----
-
-## 20. Final definitions of success
-
-**A successful Linux MVP is not a pretty viewer.** It is an installed, offline ExifTool frontend that can inspect arbitrary supported file families; safely plan, execute and verify real metadata changes in batches; preserve user recovery options; display exact command intent and truthful per-file outcomes; pass real automated tests; and work in both dark and light themes.
-
-**A successful stable ExifBee release is not a claim that all ExifTool tags are editable.** It is a truthful, dynamic and complete-access interface to the **capabilities that a particular installed/bundled ExifTool actually provides**, including a safe advanced escape hatch and clear limits, on verified Linux, macOS and Windows packages.
-
-**A successful SDD process is not the number of checked boxes.** It is an auditable invariant: requirements remain stable and intentional, tests assert user-visible behavior, CI verifies those tests, release gates reflect the platform actually exercised, and documentation stays small enough to remain accurate.
-
-**End of ExifBee SDD v1.0.19.**
+| DEC-020 | 2026-10-29 | File import goes through a Rust-owned session registry (`service/files.rs`): the native multi-select dialog (`add_files`) and window drops (`WindowEvent::DragDrop` handled in Rust) both register absolute paths, deduplicated by canonical path, and the renderer receives only opaque IDs (`f1`, `f2`, …) plus display name and path; `read_file(id)` refuses any ID the registry did not issue with `ScopeViolation`. A drop's result reaches the renderer as the `files-dropped` event, so the capability adds `core:event:allow-listen`/`allow-unlisten` (not emit). Import only registers; each file is read when first selected. Folders, FIFOs, sockets and devices are refused with a reason until S3-T02 folder import | Keeps SEC-008: no command accepts a path, and dropped paths never round-trip through the WebView. Listening is not scoped per event in Tauri 2, so the renderer could also hear Tauri's own `tauri://drag-drop` events, which carry only paths the user just dropped and that no command accepts. Lazy reads keep a 1,000-file import from starting 1,000 ExifTool runs; batched reads arrive with S3-T03. Refusing non-regular files avoids reads that block forever on a FIFO | Active |

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import libRs from '../../src-tauri/src/lib.rs?raw';
 import errorRs from '../../src-tauri/src/domain/error.rs?raw';
 import { ERROR_KINDS, ERROR_TEXT, toAppError } from './errors';
-import { COMMAND_NAMES, appInfo } from './ipc';
+import { COMMAND_NAMES, appInfo, readFile } from './ipc';
 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke }));
@@ -41,7 +41,12 @@ describe('typed IPC contract', () => {
 
     invoke.mockResolvedValueOnce({ version: '0.1.0', settingsWarning: null });
     await expect(appInfo()).resolves.toEqual({ version: '0.1.0', settingsWarning: null });
-    expect(invoke).toHaveBeenLastCalledWith('app_info');
+    expect(invoke).toHaveBeenLastCalledWith('app_info', undefined);
+
+    // Files are named by the opaque ID Rust issued, never by path.
+    invoke.mockResolvedValueOnce({ sourceFile: '/a.jpg', error: null, warnings: [], tags: [] });
+    await readFile('f1');
+    expect(invoke).toHaveBeenLastCalledWith('read_file', { id: 'f1' });
   });
 
   it('normalizes non-object values defensively', () => {

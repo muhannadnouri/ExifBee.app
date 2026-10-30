@@ -10,7 +10,8 @@ const COMMANDS: &[&str] = &[
     "exiftool_status",
     "choose_exiftool_override",
     "reset_exiftool_override",
-    "read_selected_file",
+    "add_files",
+    "read_file",
 ];
 
 fn main() {

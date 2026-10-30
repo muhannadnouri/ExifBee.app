@@ -2,16 +2,19 @@
 //! the native dialog and works only with what the user picked.
 
 use crate::adapter::exiftool::read::{read_metadata, FileMetadata};
+use crate::adapter::exiftool::resolver::ExifTool;
 use crate::domain::error::{AppError, ErrorKind};
 use crate::service::dependency::{self, ExifToolStatus};
+use crate::service::files::{FileId, FileRegistry, ImportResult, RejectedPath};
 use crate::service::settings::SettingsStore;
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::{DialogExt, FilePath};
 
 pub type SettingsState = Mutex<SettingsStore>;
+pub type FilesState = Mutex<FileRegistry>;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -128,26 +131,101 @@ pub async fn reset_exiftool_override(app: AppHandle) -> Result<ExifToolStatus, A
     .await
 }
 
-/// Lets the user pick one file of any type and returns its metadata; `None` if cancelled.
+/// Resolves ExifTool with the current override. If it is unavailable the error is the same one
+/// the Settings card shows (`DependencyMissing`, `Unsupported`, …), so the UI can point there.
+fn current_tool(app: &AppHandle) -> Result<ExifTool, AppError> {
+    let (status, tool) = dependency::check(current_override(app)?.as_deref());
+    tool.ok_or_else(|| {
+        status
+            .error
+            .unwrap_or_else(|| internal("ExifTool unavailable"))
+    })
+}
+
+/// Registers user-chosen paths in the session's [`FileRegistry`].
+fn register(app: &AppHandle, paths: Vec<PathBuf>) -> Result<ImportResult, AppError> {
+    let state = app.state::<FilesState>();
+    let mut registry = state.lock().map_err(internal)?;
+    Ok(registry.add(paths))
+}
+
+/// Name of the event that carries a drop's [`ImportResult`] to the renderer.
+pub const FILES_DROPPED: &str = "files-dropped";
+
+/// Handles files dropped on the window (called from `on_window_event` in `lib.rs`, off the main
+/// thread): registers them exactly like a dialog selection and emits [`FILES_DROPPED`].
 ///
-/// Flow: native dialog → resolve ExifTool with the current override → read. If ExifTool is
-/// unavailable the error is the same one the Settings card shows (`DependencyMissing`,
-/// `Unsupported`, …), so the UI can point to Settings.
-// shortcut: one file per dialog; multi-select, drag-and-drop and batched reads come with S3-T01.
+/// Design: the drop is a user gesture seen by Rust, so its paths go straight into the registry and
+/// the renderer only ever receives IDs, the same as for `add_files` (SEC-008). Never fails
+/// silently: if registering fails, every path comes back rejected with the reason.
+pub fn files_dropped(app: &AppHandle, paths: Vec<PathBuf>) {
+    let shown: Vec<String> = paths
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect();
+    let result = register(app, paths).unwrap_or_else(|error| ImportResult {
+        rejected: shown
+            .into_iter()
+            .map(|path| RejectedPath {
+                path,
+                reason: error.message.clone(),
+            })
+            .collect(),
+        ..ImportResult::default()
+    });
+    if let Err(error) = app.emit_to("main", FILES_DROPPED, result) {
+        eprintln!("could not deliver dropped files to the window: {error}");
+    }
+}
+
+/// Lets the user pick any number of files of any type and adds them to the session; `None` if
+/// cancelled. Nothing is read here: reads happen per file through `read_file` (FR-003).
+///
+/// Flow: native multi-select dialog (Rust side) → each selection to a path (a non-path selection,
+/// e.g. a URL from a portal-backed dialog, is reported as rejected) → [`FileRegistry::add`].
 #[tauri::command]
-pub async fn read_selected_file(app: AppHandle) -> Result<Option<FileMetadata>, AppError> {
+pub async fn add_files(app: AppHandle) -> Result<Option<ImportResult>, AppError> {
     blocking(move || {
-        let Some(picked) = app.dialog().file().blocking_pick_file() else {
+        let Some(picked) = app.dialog().file().blocking_pick_files() else {
             return Ok(None);
         };
-        let path = picked_path(picked)?;
-        let (status, tool) = dependency::check(current_override(&app)?.as_deref());
-        let tool = tool.ok_or_else(|| {
-            status
-                .error
-                .unwrap_or_else(|| internal("ExifTool unavailable"))
-        })?;
-        Ok(Some(read_metadata(&tool, &path)?))
+        let mut paths = Vec::new();
+        let mut unusable = Vec::new();
+        for selection in picked {
+            let shown = selection.to_string();
+            match picked_path(selection) {
+                Ok(path) => paths.push(path),
+                Err(error) => unusable.push(RejectedPath {
+                    path: shown,
+                    reason: error.message,
+                }),
+            }
+        }
+        let mut result = register(&app, paths)?;
+        result.rejected.extend(unusable);
+        Ok(Some(result))
+    })
+    .await
+}
+
+/// Reads the metadata of a file added in this session.
+///
+/// Only an ID the registry issued is accepted; anything else is a `ScopeViolation`, so the
+/// renderer can never make Rust open a path of its choosing (SPEC §9).
+#[tauri::command]
+pub async fn read_file(app: AppHandle, id: FileId) -> Result<FileMetadata, AppError> {
+    blocking(move || {
+        let path = {
+            let state = app.state::<FilesState>();
+            let registry = state.lock().map_err(internal)?;
+            registry.path(&id).map(PathBuf::from).ok_or_else(|| {
+                AppError::new(
+                    ErrorKind::ScopeViolation,
+                    format!("{id} is not a file added in this session"),
+                )
+            })?
+        };
+        Ok(read_metadata(&current_tool(&app)?, &path)?)
     })
     .await
 }
