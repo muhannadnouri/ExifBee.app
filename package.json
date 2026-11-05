@@ -26,6 +26,7 @@
     "format:check": "prettier --check . && cargo fmt --manifest-path src-tauri/Cargo.toml --check",
     "tauri": "tauri",
     "coverage": "vitest run --coverage.enabled --coverage.reporter=lcov --coverage.reporter=text-summary --coverage.reportsDirectory=coverage/js && cargo llvm-cov --manifest-path src-tauri/Cargo.toml --lcov --output-path coverage/rust.lcov",
+    "bench:metadata": "node tests/performance/run.mjs",
     "audit:deps": "npm audit --audit-level=high && cargo audit --file src-tauri/Cargo.lock"
   },
   "dependencies": {

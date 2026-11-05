@@ -1,0 +1,346 @@
+{
+  "environment": {
+    "cpu": "Intel(R) Core(TM) Ultra 5 325",
+    "cores": 8,
+    "memoryGiB": 23,
+    "os": "CachyOS (7.3.1-1-cachyos)",
+    "load1": 1.9,
+    "node": "v24.21.0",
+    "rust": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "commit": "4a20d1a77eb438d60972714ba7de226597f50560",
+    "dirty": true,
+    "fixturesSha256": "b4d958f6a3668ab7786e16745ec19dc878bb7af6ed46882bb3d56a969f4b92a0",
+    "exiftool": "13.55",
+    "exiftoolPath": "/usr/bin/vendor_perl/exiftool"
+  },
+  "metrics": {
+    "filter.filterText1k": {
+      "unit": "ms",
+      "n": 25,
+      "median": 0.135,
+      "p95": 0.287,
+      "min": 0.093,
+      "max": 0.553
+    },
+    "filter.filterScoped1k": {
+      "unit": "ms",
+      "n": 25,
+      "median": 0.027,
+      "p95": 0.076,
+      "min": 0.015,
+      "max": 0.228
+    },
+    "filter.sortValue1k": {
+      "unit": "ms",
+      "n": 25,
+      "median": 0.659,
+      "p95": 1.148,
+      "min": 0.587,
+      "max": 1.369
+    },
+    "filter.groupTree1k": {
+      "unit": "ms",
+      "n": 25,
+      "median": 0.025,
+      "p95": 0.073,
+      "min": 0.023,
+      "max": 0.112
+    },
+    "filter.filterText10k": {
+      "unit": "ms",
+      "n": 25,
+      "median": 0.581,
+      "p95": 0.928,
+      "min": 0.53,
+      "max": 1.033
+    },
+    "filter.filterScoped10k": {
+      "unit": "ms",
+      "n": 25,
+      "median": 0.116,
+      "p95": 0.122,
+      "min": 0.111,
+      "max": 0.126
+    },
+    "filter.sortValue10k": {
+      "unit": "ms",
+      "n": 25,
+      "median": 6.338,
+      "p95": 6.88,
+      "min": 6.116,
+      "max": 6.913
+    },
+    "filter.groupTree10k": {
+      "unit": "ms",
+      "n": 25,
+      "median": 0.219,
+      "p95": 0.277,
+      "min": 0.142,
+      "max": 0.306
+    },
+    "read_10k.readColdTotal": {
+      "unit": "ms",
+      "n": 2,
+      "median": 21078.92,
+      "p95": 21656.31,
+      "min": 21078.92,
+      "max": 21656.31
+    },
+    "read_10k.readColdFirstProgress": {
+      "unit": "ms",
+      "n": 2,
+      "median": 212.89,
+      "p95": 223.41,
+      "min": 212.89,
+      "max": 223.41
+    },
+    "read_10k.readColdPerFile": {
+      "unit": "ms",
+      "n": 2,
+      "median": 2.11,
+      "p95": 2.17,
+      "min": 2.11,
+      "max": 2.17
+    },
+    "read_10k.readWarmTotal": {
+      "unit": "ms",
+      "n": 2,
+      "median": 20784.26,
+      "p95": 20999.43,
+      "min": 20784.26,
+      "max": 20999.43
+    },
+    "read_10k.readWarmFirstProgress": {
+      "unit": "ms",
+      "n": 2,
+      "median": 202.95,
+      "p95": 223.35,
+      "min": 202.95,
+      "max": 223.35
+    },
+    "read_10k.readWarmPerFile": {
+      "unit": "ms",
+      "n": 2,
+      "median": 2.08,
+      "p95": 2.1,
+      "min": 2.08,
+      "max": 2.1
+    },
+    "read_10k.peakRss": {
+      "unit": "KiB",
+      "n": 1,
+      "median": 102376,
+      "p95": 102376,
+      "min": 102376,
+      "max": 102376
+    },
+    "read_10k.exiftoolPeakRss": {
+      "unit": "KiB",
+      "n": 1,
+      "median": 30228,
+      "p95": 30228,
+      "min": 30228,
+      "max": 30228
+    },
+    "read_1k.readColdTotal": {
+      "unit": "ms",
+      "n": 5,
+      "median": 2148.68,
+      "p95": 2451.16,
+      "min": 2078.11,
+      "max": 2451.16
+    },
+    "read_1k.readColdFirstProgress": {
+      "unit": "ms",
+      "n": 5,
+      "median": 212.58,
+      "p95": 252.11,
+      "min": 192.65,
+      "max": 252.11
+    },
+    "read_1k.readColdPerFile": {
+      "unit": "ms",
+      "n": 5,
+      "median": 2.15,
+      "p95": 2.45,
+      "min": 2.08,
+      "max": 2.45
+    },
+    "read_1k.readWarmTotal": {
+      "unit": "ms",
+      "n": 5,
+      "median": 2089.41,
+      "p95": 2151.92,
+      "min": 2077.56,
+      "max": 2151.92
+    },
+    "read_1k.readWarmFirstProgress": {
+      "unit": "ms",
+      "n": 5,
+      "median": 212.88,
+      "p95": 223.08,
+      "min": 202.78,
+      "max": 223.08
+    },
+    "read_1k.readWarmPerFile": {
+      "unit": "ms",
+      "n": 5,
+      "median": 2.09,
+      "p95": 2.15,
+      "min": 2.08,
+      "max": 2.15
+    },
+    "read_1k.peakRss": {
+      "unit": "KiB",
+      "n": 1,
+      "median": 102668,
+      "p95": 102668,
+      "min": 102668,
+      "max": 102668
+    },
+    "read_1k.exiftoolPeakRss": {
+      "unit": "KiB",
+      "n": 1,
+      "median": 30116,
+      "p95": 30116,
+      "min": 30116,
+      "max": 30116
+    },
+    "scan_10k.scanTotal": {
+      "unit": "ms",
+      "n": 5,
+      "median": 95.69,
+      "p95": 98.52,
+      "min": 88.85,
+      "max": 98.52
+    },
+    "scan_10k.peakRss": {
+      "unit": "KiB",
+      "n": 1,
+      "median": 102844,
+      "p95": 102844,
+      "min": 102844,
+      "max": 102844
+    },
+    "scan_1k.scanTotal": {
+      "unit": "ms",
+      "n": 7,
+      "median": 7.87,
+      "p95": 8.56,
+      "min": 7.45,
+      "max": 8.56
+    },
+    "scan_1k.peakRss": {
+      "unit": "KiB",
+      "n": 1,
+      "median": 102948,
+      "p95": 102948,
+      "min": 102948,
+      "max": 102948
+    },
+    "ui.fileListStreamLongestTask1k": {
+      "unit": "ms",
+      "n": 3,
+      "median": 0,
+      "p95": 0,
+      "min": 0,
+      "max": 0
+    },
+    "ui.fileListKeyP951k": {
+      "unit": "ms",
+      "n": 3,
+      "median": 16,
+      "p95": 16,
+      "min": 16,
+      "max": 16
+    },
+    "ui.tagTableOpenLongestTask1k": {
+      "unit": "ms",
+      "n": 3,
+      "median": 0,
+      "p95": 0,
+      "min": 0,
+      "max": 0
+    },
+    "ui.tagSearchKeyP951k": {
+      "unit": "ms",
+      "n": 3,
+      "median": 16,
+      "p95": 16,
+      "min": 16,
+      "max": 16
+    },
+    "ui.tagSearchLongestTask1k": {
+      "unit": "ms",
+      "n": 3,
+      "median": 0,
+      "p95": 0,
+      "min": 0,
+      "max": 0
+    },
+    "ui.tagScrollLongestTask1k": {
+      "unit": "ms",
+      "n": 3,
+      "median": 0,
+      "p95": 0,
+      "min": 0,
+      "max": 0
+    },
+    "ui.fileListStreamLongestTask10k": {
+      "unit": "ms",
+      "n": 3,
+      "median": 0,
+      "p95": 0,
+      "min": 0,
+      "max": 0
+    },
+    "ui.fileListKeyP9510k": {
+      "unit": "ms",
+      "n": 3,
+      "median": 16,
+      "p95": 16,
+      "min": 16,
+      "max": 16
+    },
+    "ui.tagTableOpenLongestTask10k": {
+      "unit": "ms",
+      "n": 3,
+      "median": 0,
+      "p95": 0,
+      "min": 0,
+      "max": 0
+    },
+    "ui.tagSearchKeyP9510k": {
+      "unit": "ms",
+      "n": 3,
+      "median": 16,
+      "p95": 16,
+      "min": 16,
+      "max": 16
+    },
+    "ui.tagSearchLongestTask10k": {
+      "unit": "ms",
+      "n": 3,
+      "median": 0,
+      "p95": 0,
+      "min": 0,
+      "max": 0
+    },
+    "ui.tagScrollLongestTask10k": {
+      "unit": "ms",
+      "n": 3,
+      "median": 0,
+      "p95": 0,
+      "min": 0,
+      "max": 0
+    },
+    "ui.rendererHeap": {
+      "unit": "KiB",
+      "n": 1,
+      "median": 23123,
+      "p95": 23123,
+      "min": 23123,
+      "max": 23123
+    }
+  }
+}

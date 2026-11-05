@@ -14,7 +14,7 @@ export default tseslint.config(
     ],
     languageOptions: { globals: globals.browser },
   },
-  { files: ['scripts/**'], languageOptions: { globals: globals.node } },
+  { files: ['scripts/**', 'tests/performance/**'], languageOptions: { globals: globals.node } },
   // All Rust calls go through the typed layer in src/lib/ipc.ts (S1-T05, SEC-008).
   {
     files: ['src/**/*.{ts,tsx}'],

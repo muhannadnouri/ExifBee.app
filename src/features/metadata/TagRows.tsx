@@ -53,6 +53,7 @@ export function TagRows({ rows, onCopy }: Props) {
   // `top` is where it was then: if the scroll position has moved since (the user scrolled and
   // the event is not delivered yet), it is not pinned.
   const atEnd = useRef({ pinned: false, top: 0 });
+  const lostFraction = useRef(0);
 
   useEffect(() => {
     const scroller = body.current?.closest<HTMLElement>('.pane');
@@ -101,7 +102,12 @@ export function TagRows({ rows, onCopy }: Props) {
     const pinned =
       atEnd.current.pinned && Math.abs((scroller?.scrollTop ?? 0) - atEnd.current.top) < 1;
     if (scroller && changed && pinned) scroller.scrollTop = scroller.scrollHeight;
-    else if (scroller && shift !== 0) scroller.scrollTop += shift;
+    else if (scroller && shift !== 0) {
+      // The browser snaps scrollTop to whole pixels; carry the rest so errors do not add up.
+      const wanted = scroller.scrollTop + shift + lostFraction.current;
+      scroller.scrollTop = wanted;
+      lostFraction.current = wanted - scroller.scrollTop;
+    }
     // Measuring layout and redrawing with it is this effect's purpose; it stops once nothing
     // changes, which happens after one pass for the rows drawn.
     // eslint-disable-next-line react-hooks/set-state-in-effect

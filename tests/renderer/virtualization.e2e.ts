@@ -89,7 +89,7 @@ test('scrolling up into rows never measured moves the view by exactly the scroll
       (key) => document.querySelector(`tr[data-key="${key}"]`)?.getBoundingClientRect().top ?? NaN,
       before.key,
     );
-    // Within 3 px: fractional row heights make the browser round scroll positions slightly.
+    // Within 3 px: the correction is only as exact as a whole-pixel scroll position.
     expect(Math.abs(after - (before.top + 400)), `${before.key} at step ${step}`).toBeLessThan(3);
   }
 });

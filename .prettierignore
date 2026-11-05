@@ -6,5 +6,6 @@ docs/SPEC.md
 coverage
 playwright-report
 test-results
+bench-results
 tests/renderer/__screenshots__
 src/lib/bindings
