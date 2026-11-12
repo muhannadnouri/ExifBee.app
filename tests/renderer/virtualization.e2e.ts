@@ -106,9 +106,9 @@ test('focus stays on a row’s Copy button while that row is scrolled far out of
   await expect(copy).toBeFocused();
   // Its row is kept drawn even though everything around the middle is drawn too.
   expect(await page.locator('tr[data-key]').count()).toBeLessThan(150);
-  // Moving on from it with the keyboard works: focus goes to the next row's button.
+  // Moving on from it with the keyboard works: focus goes to the next row's first button.
   await page.keyboard.press('Tab');
-  await expect(page.getByRole('button', { name: 'Copy value of G1:Tag00001' })).toBeFocused();
+  await expect(page.getByRole('button', { name: 'Edit G1:Tag00001' })).toBeFocused();
 });
 
 // @req UX-004, NFR-003

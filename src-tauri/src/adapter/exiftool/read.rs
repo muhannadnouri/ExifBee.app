@@ -126,6 +126,33 @@ pub fn read_metadata(tool: &ExifTool, path: &Path) -> Result<FileMetadata, ReadE
     parse_output(&output.stdout)
 }
 
+/// Whether one tag's stored bytes are valid UTF-8, read with `-b` (DEC-019, S4-T01).
+///
+/// Why: reads without `-b` replace bytes that are not UTF-8 with `?`, so editing from the shown
+/// text could overwrite the real bytes with question marks. An absent tag counts as valid.
+/// Gotcha: with `-b` ExifTool prints the raw value, joining list items; only validity matters.
+pub fn raw_is_utf8(
+    tool: &ExifTool,
+    path: &Path,
+    group: &str,
+    name: &str,
+) -> Result<bool, ReadError> {
+    let args = Args::new()
+        .options(&["-b"])
+        .tag(group, name)
+        .and_then(|args| args.files([path]))
+        .map_err(|error| ReadError::InvalidInput(error.to_string()))?;
+    let output = process::run(
+        &tool.path,
+        args.as_slice(),
+        READ_TIMEOUT,
+        MAX_READ_OUTPUT,
+        &CancelToken::default(),
+    )
+    .map_err(|error| ReadError::ProcessFailure(format!("ExifTool {error}")))?;
+    Ok(std::str::from_utf8(&output.stdout).is_ok())
+}
+
 /// Files per batched ExifTool run: inside SPEC §10.2's 50–200, and small enough that one batch's
 /// JSON stays far below [`MAX_READ_OUTPUT`] for ordinary files.
 pub const READ_BATCH: usize = 100;

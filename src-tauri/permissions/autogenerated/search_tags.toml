@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-search-tags"
+description = "Enables the search_tags command without any pre-configured scope."
+commands.allow = ["search_tags"]
+
+[[permission]]
+identifier = "deny-search-tags"
+description = "Denies the search_tags command without any pre-configured scope."
+commands.deny = ["search_tags"]

@@ -3,14 +3,22 @@ import { Button } from '../../components/atoms/Button';
 import { Select } from '../../components/atoms/Select';
 import { TextField } from '../../components/atoms/TextField';
 import { ErrorNotice } from '../../components/ErrorNotice';
-import type { AppError, FileMetadata, Writability } from '../../lib/ipc';
+import type { AppError, FileMetadata, TagEntry, Writability } from '../../lib/ipc';
 import { GroupTree } from './GroupTree';
 import { filterTags, groupTree, sortTags, tagsAsText } from './tagFilter';
 import { TagRows } from './TagRows';
 import type { GroupScope, Sort, SortKey } from './tagFilter';
 import './MetadataInspector.css';
 
-type Props = { file: FileMetadata | null; failure: AppError | null; reading: boolean };
+type Props = {
+  file: FileMetadata | null;
+  failure: AppError | null;
+  reading: boolean;
+  /** Edit a tag, or `null` to add one; must be stable (the inspector is memoized). */
+  onEdit: (tag: TagEntry | null) => void;
+  /** `Group:Tag` of this file's staged changes; must keep its identity between unrelated renders. */
+  staged: Set<string>;
+};
 
 /** Ctrl+F focuses this field (see app/shortcuts.ts). */
 export const TAG_SEARCH_ID = 'tag-search';
@@ -50,6 +58,8 @@ export const MetadataInspector = memo(function MetadataInspector({
   file,
   failure,
   reading,
+  onEdit,
+  staged,
 }: Props) {
   const [text, setText] = useState('');
   const [scope, setScope] = useState<GroupScope>(null);
@@ -152,6 +162,7 @@ export const MetadataInspector = memo(function MetadataInspector({
         >
           Copy visible
         </Button>
+        <Button onClick={() => onEdit(null)}>Add tag…</Button>
         <span className="muted inspector-count">
           {rows.length === file.tags.length
             ? `${file.tags.length.toLocaleString('en-US')} tags`
@@ -208,12 +219,18 @@ export const MetadataInspector = memo(function MetadataInspector({
                   ))}
                   <th scope="col">Write</th>
                   <th scope="col">
-                    <span className="visually-hidden">Copy</span>
+                    <span className="visually-hidden">Actions</span>
                   </th>
                 </tr>
               </thead>
               {/* Per file: measured heights and the learned estimate belong to its tags. */}
-              <TagRows key={file.sourceFile} rows={rows} onCopy={copy} />
+              <TagRows
+                key={file.sourceFile}
+                rows={rows}
+                onCopy={copy}
+                onEdit={onEdit}
+                staged={staged}
+              />
             </table>
           )}
         </div>

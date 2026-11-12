@@ -28,3 +28,9 @@
   background: var(--accent);
   filter: brightness(1.1);
 }
+
+.button-primary:disabled {
+  color: var(--text-muted);
+  border-color: var(--border-strong);
+  background: var(--surface-raised);
+}

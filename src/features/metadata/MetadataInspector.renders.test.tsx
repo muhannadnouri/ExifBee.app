@@ -16,6 +16,9 @@ vi.mock('./TagRows', () => ({
 
 afterEach(cleanup);
 
+const noEdit = () => undefined;
+const none = new Set<string>();
+
 const file = (sourceFile: string): FileMetadata => ({
   sourceFile,
   error: null,
@@ -30,14 +33,26 @@ describe('inspector re-render guard', () => {
   it('does not redraw its tags when the app re-renders for something else', () => {
     const shown = file('/a.jpg');
     drawn.count = 0;
-    const { rerender } = render(<MetadataInspector file={shown} failure={null} reading />);
+    const { rerender } = render(
+      <MetadataInspector file={shown} failure={null} reading onEdit={noEdit} staged={none} />,
+    );
     expect(drawn.count).toBe(1);
     // e.g. scan or read progress, several times a second: same props, no redraw.
     for (let i = 0; i < 20; i++)
-      rerender(<MetadataInspector file={shown} failure={null} reading />);
+      rerender(
+        <MetadataInspector file={shown} failure={null} reading onEdit={noEdit} staged={none} />,
+      );
     expect(drawn.count).toBe(1);
 
-    rerender(<MetadataInspector file={file('/b.jpg')} failure={null} reading />);
+    rerender(
+      <MetadataInspector
+        file={file('/b.jpg')}
+        failure={null}
+        reading
+        onEdit={noEdit}
+        staged={none}
+      />,
+    );
     expect(drawn.count).toBe(2);
   });
 });

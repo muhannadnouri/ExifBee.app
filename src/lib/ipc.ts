@@ -8,6 +8,7 @@ import type { FileMetadata } from './bindings/FileMetadata';
 import type { ImportResult } from './bindings/ImportResult';
 import type { ReadUpdate } from './bindings/ReadUpdate';
 import type { ScanOptions } from './bindings/ScanOptions';
+import type { TagPage } from './bindings/TagPage';
 import type { ScanUpdate } from './bindings/ScanUpdate';
 import { toAppError } from './errors';
 
@@ -20,7 +21,10 @@ export type {
   ScanOptions,
   ScanUpdate,
 };
-export type { ReadUpdate };
+export type { ReadUpdate, TagPage };
+export type { EditValue } from './bindings/EditValue';
+export type { SetTag } from './bindings/SetTag';
+export type { TagCapability } from './bindings/TagCapability';
 export type { ReadCounts } from './bindings/ReadCounts';
 export type { ReadSummary } from './bindings/ReadSummary';
 export type { ScanCounts } from './bindings/ScanCounts';
@@ -51,6 +55,8 @@ export type Commands = {
   cancel_scan: boolean;
   cancel_reads: boolean;
   prioritize_reads: null;
+  search_tags: TagPage;
+  raw_text_is_utf8: boolean;
 };
 
 /** Runtime list of `Commands` keys; the `Record` type keeps it complete. */
@@ -66,6 +72,8 @@ export const COMMAND_NAMES = Object.keys({
   cancel_scan: true,
   cancel_reads: true,
   prioritize_reads: true,
+  search_tags: true,
+  raw_text_is_utf8: true,
 } satisfies Record<keyof Commands, true>) as (keyof Commands)[];
 
 /** The only `invoke` call in the app (lint-enforced); rejections always become an `AppError`. */
@@ -93,6 +101,12 @@ export const pickFolder = () => call('pick_folder');
 /** Scans the folder chosen with `pickFolder` with these options (also used for dropped folders). */
 export const scanPickedFolder = (options: ScanOptions) => call('scan_picked_folder', { options });
 export const cancelScan = (scanId: number) => call('cancel_scan', { scanId });
+
+/** Writable tags (never System ones) whose `Group:Tag` contains `query`, for Add tag; at most 100. */
+export const searchTags = (query: string) => call('search_tags', { query });
+/** Whether a tag's stored bytes are valid UTF-8, so editing may start from its shown text. */
+export const rawTextIsUtf8 = (id: string, group: string, name: string) =>
+  call('raw_text_is_utf8', { id, group, name });
 
 /** Calls `handler` with every folder scan update (new files, problems, running totals, end state). */
 export const onScanProgress = (handler: (update: ScanUpdate) => void) =>

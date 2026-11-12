@@ -15,6 +15,8 @@
     "allow-cancel-scan",
     "allow-cancel-reads",
     "allow-prioritize-reads",
+    "allow-search-tags",
+    "allow-raw-text-is-utf8",
     "core:event:allow-listen",
     "core:event:allow-unlisten"
   ]

@@ -8,6 +8,9 @@ import { MetadataInspector } from './MetadataInspector';
 
 afterEach(cleanup);
 
+const noEdit = () => undefined;
+const none = new Set<string>();
+
 const photo: FileMetadata = {
   sourceFile: '/files/photo.jpg',
   error: null,
@@ -42,7 +45,15 @@ const rowHeaders = () =>
 // @req FR-006, UX-006, TST-003
 describe('metadata inspector', () => {
   it('tells same-name tags apart by group and copy, and shows each one’s writability', () => {
-    render(<MetadataInspector file={photo} failure={null} reading={false} />);
+    render(
+      <MetadataInspector
+        file={photo}
+        failure={null}
+        reading={false}
+        onEdit={noEdit}
+        staged={none}
+      />,
+    );
     // Row headers are named by the full key for screen readers; the Group column shows it.
     expect(rowHeaders()).toContain('IFD0:Make');
     expect(rowHeaders()).toContain('XMP-tiff:Copy1:Make');
@@ -55,12 +66,20 @@ describe('metadata inspector', () => {
     );
     // No photo-centric wording in the inspector's own labels.
     const labels = screen.getAllByRole('columnheader').map((header) => header.textContent);
-    expect(labels).toEqual(['Group', 'Tag', 'Value', 'Write', 'Copy']);
+    expect(labels).toEqual(['Group', 'Tag', 'Value', 'Write', 'Actions']);
   });
 
   it('narrows by group tree, search and writability, and clears back to everything', async () => {
     const user = userEvent.setup();
-    render(<MetadataInspector file={photo} failure={null} reading={false} />);
+    render(
+      <MetadataInspector
+        file={photo}
+        failure={null}
+        reading={false}
+        onEdit={noEdit}
+        staged={none}
+      />,
+    );
     const tree = within(screen.getByRole('navigation', { name: 'Tag groups' }));
     expect(tree.getAllByRole('button').map((button) => button.textContent)).toEqual([
       'All groups7',
@@ -94,7 +113,15 @@ describe('metadata inspector', () => {
 
   it('sorts by a column ascending, descending, then back to ExifTool order', async () => {
     const user = userEvent.setup();
-    render(<MetadataInspector file={photo} failure={null} reading={false} />);
+    render(
+      <MetadataInspector
+        file={photo}
+        failure={null}
+        reading={false}
+        onEdit={noEdit}
+        staged={none}
+      />,
+    );
     const original = rowHeaders();
     const tagHeader = screen.getByRole('columnheader', { name: /Tag/ });
     await user.click(within(tagHeader).getByRole('button'));
@@ -114,7 +141,15 @@ describe('metadata inspector', () => {
 
   it('copies one value or all visible tags, and says so', async () => {
     const user = userEvent.setup();
-    render(<MetadataInspector file={photo} failure={null} reading={false} />);
+    render(
+      <MetadataInspector
+        file={photo}
+        failure={null}
+        reading={false}
+        onEdit={noEdit}
+        staged={none}
+      />,
+    );
     await user.click(screen.getByRole('button', { name: 'Copy value of XMP-dc:Title' }));
     expect(await navigator.clipboard.readText()).toBe('Bee on lavender');
     expect(screen.getByRole('status').textContent).toBe('Copied the value of XMP-dc:Title.');
@@ -138,11 +173,27 @@ describe('metadata inspector', () => {
         { 'System:FileName': ['File', 'writable'], 'ZIP:ZipFileName': ['ZIP', 'readOnly'] },
       ),
     };
-    const { rerender } = render(<MetadataInspector file={photo} failure={null} reading={false} />);
+    const { rerender } = render(
+      <MetadataInspector
+        file={photo}
+        failure={null}
+        reading={false}
+        onEdit={noEdit}
+        staged={none}
+      />,
+    );
     await user.click(screen.getByRole('button', { name: /^XMP2/ }));
     await user.selectOptions(screen.getByRole('combobox', { name: 'Show' }), 'writable');
 
-    rerender(<MetadataInspector file={archive} failure={null} reading={false} />);
+    rerender(
+      <MetadataInspector
+        file={archive}
+        failure={null}
+        reading={false}
+        onEdit={noEdit}
+        staged={none}
+      />,
+    );
     expect(screen.getByText(/This file format is not writable/)).toBeTruthy();
     // The XMP group does not exist here, so the tree falls back to all groups; Show stays.
     expect(screen.getByRole('button', { name: /^All groups/ }).getAttribute('aria-pressed')).toBe(
@@ -155,6 +206,8 @@ describe('metadata inspector', () => {
         file={{ ...archive, formatWritable: null }}
         failure={null}
         reading={false}
+        onEdit={noEdit}
+        staged={none}
       />,
     );
     expect(screen.getByText(/could not be confirmed/)).toBeTruthy();

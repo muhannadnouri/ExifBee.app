@@ -23,6 +23,8 @@ const ipc = vi.hoisted(() => ({
   onReadProgress: vi.fn(),
   cancelReads: vi.fn(),
   pickFolder: vi.fn(),
+  searchTags: vi.fn(),
+  rawTextIsUtf8: vi.fn(),
   scanPickedFolder: vi.fn(),
   cancelScan: vi.fn(),
   appInfo: vi.fn(),
@@ -558,6 +560,59 @@ describe('theme switcher', () => {
     expect(document.documentElement.dataset.theme).toBe('dark');
     await user.click(theme());
     expect(document.documentElement.dataset.theme).toBeUndefined();
+  });
+});
+
+// @req FR-008, UX-006
+describe('staging tag edits', () => {
+  it('stages an edit, marks the row, lists it in Actions, replaces it on re-edit and undoes it', async () => {
+    const user = userEvent.setup();
+    ipc.rawTextIsUtf8.mockResolvedValue(true);
+    addFiles.mockResolvedValueOnce(imported(['/a.jpg']));
+    const writable = file('/a.jpg', {
+      tags: tagsOf(
+        { 'IFD0:Make': 'Canon', 'IFD0:Model': 'EOS' },
+        { 'IFD0:Make': ['EXIF', 'writable'], 'IFD0:Model': ['EXIF', 'writable'] },
+      ),
+    });
+    answerReads([writable]);
+    render(<App />);
+    await addViaMenu(user, 'Files…');
+    const metadata = within(screen.getByRole('region', { name: 'Metadata' }));
+
+    const editTo = async (key: string, value: string) => {
+      await user.click(await metadata.findByRole('button', { name: `Edit ${key}` }));
+      const dialog = within(screen.getByRole('dialog', { name: 'Edit tag' }));
+      const box = await dialog.findByRole('textbox', { name: 'New value' });
+      await user.clear(box);
+      await user.type(box, value);
+      await vi.waitFor(() =>
+        expect(
+          (dialog.getByRole('button', { name: 'Stage change' }) as HTMLButtonElement).disabled,
+        ).toBe(false),
+      );
+      await user.click(dialog.getByRole('button', { name: 'Stage change' }));
+    };
+    await editTo('IFD0:Make', 'Nikon');
+    await editTo('IFD0:Make', 'Pentax');
+    await editTo('IFD0:Model', 'K-1');
+
+    // Marked in the table; nothing was written (no write command exists before S4-T03).
+    expect(metadata.getByRole('row', { name: /IFD0:Make/ }).textContent).toContain('staged');
+    const actions = screen.getByRole('button', { name: /Actions/ });
+    expect(actions.textContent).toContain('Actions (2 staged)');
+    await user.click(actions);
+    const drawer = within(screen.getByRole('region', { name: 'Staged for a.jpg' }));
+    expect(drawer.getAllByRole('listitem').map((item) => item.textContent)).toEqual([
+      'IFD0:Make Canon → PentaxUndo',
+      'IFD0:Model EOS → K-1Undo',
+    ]);
+
+    await user.click(drawer.getByRole('button', { name: 'Undo IFD0:Make' }));
+    expect(drawer.getAllByRole('listitem')).toHaveLength(1);
+    expect(metadata.getByRole('row', { name: /IFD0:Make/ }).textContent).not.toContain('staged');
+    await user.click(screen.getByRole('button', { name: 'Discard all' }));
+    expect(screen.getByText(/No staged changes/)).toBeTruthy();
   });
 });
 

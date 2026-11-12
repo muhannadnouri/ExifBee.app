@@ -53,6 +53,7 @@ struct CacheFile {
 /// One page of tags, for UIs that must not receive all ~26k tags at once.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct TagPage {
     /// Matching tags in total, so a UI can show "1–100 of 342".
     pub total: usize,
@@ -65,16 +66,35 @@ impl CapabilitySnapshot {
     ///
     /// Example: `page("xmp-dc:t", 0, 50)` → `XMP-dc:Title`, `XMP-dc:Type`, … with `total`.
     pub fn page(&self, search: &str, offset: usize, limit: usize) -> TagPage {
+        self.page_where(search, offset, limit, |_| true)
+    }
+
+    /// Like [`Self::page`], for Add tag (S4-T01): only tags ExifTool can write, and no `System`
+    /// tags, which change the file itself rather than its metadata (see `SetTag::problem`).
+    pub fn writable_page(&self, search: &str, offset: usize, limit: usize) -> TagPage {
+        self.page_where(search, offset, limit, |tag| {
+            tag.writable && tag.group1 != "System"
+        })
+    }
+
+    fn page_where(
+        &self,
+        search: &str,
+        offset: usize,
+        limit: usize,
+        keep: impl Fn(&TagCapability) -> bool,
+    ) -> TagPage {
         let needle = search.to_lowercase();
         let matches: Vec<&TagCapability> = self
             .listings
             .tags
             .iter()
             .filter(|tag| {
-                needle.is_empty()
-                    || format!("{}:{}", tag.group1, tag.name)
-                        .to_lowercase()
-                        .contains(&needle)
+                keep(tag)
+                    && (needle.is_empty()
+                        || format!("{}:{}", tag.group1, tag.name)
+                            .to_lowercase()
+                            .contains(&needle))
             })
             .collect();
         TagPage {

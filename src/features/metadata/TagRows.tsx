@@ -9,6 +9,9 @@ import './TagRows.css';
 type Props = {
   rows: TagEntry[];
   onCopy: (content: string, what: string) => void;
+  onEdit: (tag: TagEntry) => void;
+  /** `Group:Tag` of the tags with a staged change, marked in the Write column. */
+  staged: Set<string>;
 };
 
 const WRITABILITY: Record<Writability, { label: string; hint: string }> = {
@@ -39,7 +42,7 @@ const OVERSCAN = 600;
  *   away, so focus is never dropped to the page; spacers fill the gaps around it.
  * - The scroll container is the enclosing `.pane`; without one (tests) everything is drawn.
  */
-export function TagRows({ rows, onCopy }: Props) {
+export function TagRows({ rows, onCopy, onEdit, staged }: Props) {
   const body = useRef<HTMLTableSectionElement>(null);
   // Measured heights by tag key: one Map for the component's life, filled in by the layout
   // effect; `measured` counts fills so a render follows each.
@@ -152,7 +155,17 @@ export function TagRows({ rows, onCopy }: Props) {
         <Spacer key={`gap-${next}`} height={(starts[index] ?? 0) - (starts[next] ?? 0)} />,
       );
     const tag = rows[index];
-    if (tag) parts.push(<TagRow key={tag.key} tag={tag} index={index} onCopy={onCopy} />);
+    if (tag)
+      parts.push(
+        <TagRow
+          key={tag.key}
+          tag={tag}
+          index={index}
+          onCopy={onCopy}
+          onEdit={onEdit}
+          staged={staged.has(`${tag.group1}:${tag.name}`)}
+        />,
+      );
     next = index + 1;
   }
   if (next < rows.length)
@@ -186,10 +199,14 @@ const TagRow = memo(function TagRow({
   tag,
   index,
   onCopy,
+  onEdit,
+  staged,
 }: {
   tag: TagEntry;
   index: number;
   onCopy: Props['onCopy'];
+  onEdit: Props['onEdit'];
+  staged: boolean;
 }) {
   const { label, hint } = WRITABILITY[tag.writable];
   return (
@@ -211,8 +228,10 @@ const TagRow = memo(function TagRow({
         <span className={`writability writability-${tag.writable}`} title={hint}>
           {label}
         </span>
+        {staged && <span className="tags-staged"> · staged</span>}
       </td>
-      <td>
+      <td className="tags-actions">
+        <IconButton icon="edit" label={`Edit ${tag.key}`} onClick={() => onEdit(tag)} />
         <IconButton
           icon="copy"
           label={`Copy value of ${tag.key}`}

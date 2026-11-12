@@ -17,6 +17,8 @@ const COMMANDS: &[&str] = &[
     "cancel_scan",
     "cancel_reads",
     "prioritize_reads",
+    "search_tags",
+    "raw_text_is_utf8",
 ];
 
 fn main() {

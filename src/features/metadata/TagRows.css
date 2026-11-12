@@ -3,3 +3,16 @@
   padding: 0;
   border: 0;
 }
+
+.tags-actions {
+  white-space: nowrap;
+}
+
+.tags-actions .icon-button + .icon-button {
+  margin-inline-start: 0.25rem;
+}
+
+.tags-staged {
+  color: var(--accent);
+  font-weight: 600;
+}

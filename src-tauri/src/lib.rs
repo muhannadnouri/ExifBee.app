@@ -47,6 +47,8 @@ pub fn run() {
             commands::cancel_scan,
             commands::cancel_reads,
             commands::prioritize_reads,
+            commands::search_tags,
+            commands::raw_text_is_utf8,
         ])
         .run(tauri::generate_context!())
         .expect("error while running ExifBee");

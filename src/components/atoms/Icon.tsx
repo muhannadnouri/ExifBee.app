@@ -4,6 +4,10 @@ import './Icon.css';
 const PATHS = {
   plus: <path d="M12 5v14M5 12h14" />,
   'chevron-down': <path d="m6 9 6 6 6-6" />,
+  'arrow-up': <path d="M12 19V5M6 11l6-6 6 6" />,
+  'arrow-down': <path d="M12 5v14M6 13l6 6 6-6" />,
+  remove: <path d="M6 6l12 12M18 6 6 18" />,
+  edit: <path d="M4 20h4L19 9l-4-4L4 16v4ZM13.5 6.5l4 4" />,
   copy: (
     <>
       <rect x="8.5" y="8.5" width="12" height="12" rx="2" />

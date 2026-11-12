@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useRef, useState } from 'react';
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { Button } from '../components/atoms/Button';
 import { Notice } from '../components/atoms/Notice';
@@ -9,6 +9,9 @@ import { MetadataInspector, TAG_SEARCH_ID } from '../features/metadata/MetadataI
 import { ShortcutsDialog } from '../features/help/ShortcutsDialog';
 import { SettingsDialog } from '../features/settings/SettingsDialog';
 import { ThemeSwitcher } from '../features/settings/ThemeSwitcher';
+import { StagedChanges, stagedKey } from '../features/edit/StagedChanges';
+import type { StagedEdit } from '../features/edit/StagedChanges';
+import { TagEditorDialog } from '../features/edit/TagEditorDialog';
 import { IconButton } from '../components/atoms/IconButton';
 import { Icon } from '../components/atoms/Icon';
 import { MenuButton } from '../components/MenuButton';
@@ -42,6 +45,8 @@ import type {
   ReadUpdate,
   ScanOptions,
   ScanUpdate,
+  SetTag,
+  TagEntry,
 } from '../lib/ipc';
 import './App.css';
 
@@ -121,6 +126,10 @@ export function App() {
   const [folderDialogKey, setFolderDialogKey] = useState(0);
   // Scans whose Cancel was clicked, so the button says "Stopping…" until they end.
   const [stopping, setStopping] = useState<number[]>([]);
+  // Staged tag changes (S4-T01): nothing is written until the plan step (S4-T03).
+  const [staged, setStaged] = useState<StagedEdit[]>([]);
+  // The tag being edited in the selected file (`tag: null` = Add tag); closed when undefined.
+  const [editing, setEditing] = useState<{ tag: TagEntry | null } | undefined>(undefined);
   // Background read summaries by file ID. The Map is updated in place (setting a key is
   // idempotent, so a repeated updater is harmless) and rewrapped to re-render: copying 200,000
   // entries per update would cost more than the update itself.
@@ -452,6 +461,31 @@ export function App() {
     return () => window.removeEventListener('keydown', onKeyDown);
   });
 
+  // Stable, so the memoized inspector does not redraw when unrelated state changes.
+  const editTag = useCallback((tag: TagEntry | null) => setEditing({ tag }), []);
+  const stagedHere = useMemo(
+    () =>
+      new Set(
+        staged
+          .filter((item) => item.fileId === selected)
+          .map(({ edit }) => `${edit.group}:${edit.name}`),
+      ),
+    [staged, selected],
+  );
+  /** Stages one change, replacing any earlier one to the same tag of the same file. */
+  const stage = (edit: SetTag, before: string | null) => {
+    const entry = files.find((candidate) => candidate.id === selected);
+    if (!entry) return;
+    const item: StagedEdit = { fileId: entry.id, fileName: entry.name, edit, before };
+    setStaged((current) => [
+      ...current.filter(
+        (other) => stagedKey(other.fileId, other.edit) !== stagedKey(item.fileId, item.edit),
+      ),
+      item,
+    ]);
+    setStatus(`Staged ${edit.group}:${edit.name} for ${entry.name}; it is not written yet`);
+  };
+
   const drawerOpen = layout.actionsOpen || layout.logOpen;
   const file = selected ? (reads[selected] ?? null) : null;
   const failure = selected ? (failures[selected] ?? null) : null;
@@ -570,7 +604,13 @@ export function App() {
               {info.settingsWarning}
             </Notice>
           )}
-          <MetadataInspector file={file} failure={failure} reading={selected !== null} />
+          <MetadataInspector
+            file={file}
+            failure={failure}
+            reading={selected !== null}
+            onEdit={editTag}
+            staged={stagedHere}
+          />
         </section>
       </div>
 
@@ -587,11 +627,26 @@ export function App() {
         )}
         <Drawer
           id="actions-drawer"
-          title="Actions"
+          title={staged.length > 0 ? `Actions (${staged.length} staged)` : 'Actions'}
           open={layout.actionsOpen}
           onToggle={() => update({ actionsOpen: !layout.actionsOpen })}
         >
-          <p className="muted">No staged changes. Metadata editing is not available yet.</p>
+          <StagedChanges
+            staged={staged}
+            onUndo={(item) => {
+              setStaged((current) =>
+                current.filter(
+                  (other) =>
+                    stagedKey(other.fileId, other.edit) !== stagedKey(item.fileId, item.edit),
+                ),
+              );
+              setStatus(`Undid the staged change to ${item.edit.group}:${item.edit.name}`);
+            }}
+            onDiscardAll={() => {
+              setStaged([]);
+              setStatus('Discarded all staged changes');
+            }}
+          />
         </Drawer>
         <Drawer
           id="log-drawer"
@@ -634,6 +689,15 @@ export function App() {
           }
           onAdd={(options) => void addFolder(options)}
           onClose={() => setFolderChoice(null)}
+        />
+      )}
+      {editing && selected && file && (
+        <TagEditorDialog
+          fileId={selected}
+          file={file}
+          tag={editing.tag}
+          onStage={stage}
+          onClose={() => setEditing(undefined)}
         />
       )}
       <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />

@@ -2,10 +2,10 @@
 //! the native dialog and works only with what the user picked.
 
 use crate::adapter::exiftool::process::CancelToken;
-use crate::adapter::exiftool::read::{read_metadata, FileMetadata};
+use crate::adapter::exiftool::read::{raw_is_utf8, read_metadata, FileMetadata};
 use crate::adapter::exiftool::resolver::ExifTool;
 use crate::domain::error::{AppError, ErrorKind};
-use crate::service::capabilities::CapabilityCache;
+use crate::service::capabilities::{CapabilityCache, TagPage};
 use crate::service::dependency::{self, ExifToolStatus};
 use crate::service::files::{FileId, FileRegistry, ImportResult, ImportedFile, RejectedPath};
 use crate::service::reads::{self, ReadQueue};
@@ -430,6 +430,56 @@ pub fn prioritize_reads(reads: State<'_, ReadsState>, ids: Vec<FileId>) -> Resul
     Ok(())
 }
 
+/// The path behind an ID the registry issued; anything else is a `ScopeViolation`, so the
+/// renderer can never make Rust open a path of its choosing (SPEC §9).
+fn registered_path(app: &AppHandle, id: &str) -> Result<PathBuf, AppError> {
+    let state = app.state::<FilesState>();
+    let registry = state.lock().map_err(internal)?;
+    registry.path(id).map(PathBuf::from).ok_or_else(|| {
+        AppError::new(
+            ErrorKind::ScopeViolation,
+            format!("{id} is not a file added in this session"),
+        )
+    })
+}
+
+/// Tags ExifTool can write whose `Group:Tag` contains `query`, for Add tag (S4-T01): at most
+/// 100, never `System` tags. `query` is bounded; it is only ever compared, never run.
+#[tauri::command]
+pub async fn search_tags(app: AppHandle, query: String) -> Result<TagPage, AppError> {
+    if query.chars().count() > 128 {
+        return Err(AppError::new(
+            ErrorKind::InvalidInput,
+            "search text is too long",
+        ));
+    }
+    blocking(move || {
+        let tool = current_tool(&app)?;
+        let snapshot = app
+            .state::<CapabilitiesState>()
+            .snapshot(&tool, &CancelToken::default())
+            .map_err(|error| AppError::new(ErrorKind::ProcessFailure, error.to_string()))?;
+        Ok(snapshot.writable_page(&query, 0, 100))
+    })
+    .await
+}
+
+/// Whether one tag of a file added in this session holds valid UTF-8, so its shown text is its
+/// stored text and editing may start from it (DEC-019). Group and name are validated.
+#[tauri::command]
+pub async fn raw_text_is_utf8(
+    app: AppHandle,
+    id: FileId,
+    group: String,
+    name: String,
+) -> Result<bool, AppError> {
+    blocking(move || {
+        let path = registered_path(&app, &id)?;
+        Ok(raw_is_utf8(&current_tool(&app)?, &path, &group, &name)?)
+    })
+    .await
+}
+
 /// Stops the background reads: queued files stay unread (selecting one still reads it) and the
 /// final `Cancelled` update follows as an event. Returns `false` if nothing was being read.
 #[tauri::command]
@@ -459,16 +509,7 @@ pub fn warm_capabilities(app: &AppHandle) {
 #[tauri::command]
 pub async fn read_file(app: AppHandle, id: FileId) -> Result<FileMetadata, AppError> {
     blocking(move || {
-        let path = {
-            let state = app.state::<FilesState>();
-            let registry = state.lock().map_err(internal)?;
-            registry.path(&id).map(PathBuf::from).ok_or_else(|| {
-                AppError::new(
-                    ErrorKind::ScopeViolation,
-                    format!("{id} is not a file added in this session"),
-                )
-            })?
-        };
+        let path = registered_path(&app, &id)?;
         let tool = current_tool(&app)?;
         let mut file = read_metadata(&tool, &path)?;
         // Without the capability lists the read is still shown, with writability Unknown.

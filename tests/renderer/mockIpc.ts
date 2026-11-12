@@ -102,6 +102,14 @@ export async function mockIpc(page: Page, reads: MockRead[] = SAMPLE_READS) {
         scan_picked_folder: () => ++scans,
         cancel_scan: ({ scanId }) => cancelledScans.push(Number(scanId)) > 0,
         cancel_reads: () => readsCancelled.push(true) > 0,
+        search_tags: () => ({
+          total: 2,
+          tags: [
+            { group1: 'XMP-dc', name: 'Creator', group0: 'XMP', writable: true },
+            { group1: 'XMP-dc', name: 'Rights', group0: 'XMP', writable: true },
+          ],
+        }),
+        raw_text_is_utf8: () => true,
         prioritize_reads: ({ ids }) => {
           prioritized.push(ids as string[]);
           return null;

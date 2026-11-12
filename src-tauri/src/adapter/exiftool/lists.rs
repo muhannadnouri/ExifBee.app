@@ -20,6 +20,7 @@ const MAX_LIST_OUTPUT: usize = 32 * 1024 * 1024;
 /// `IFD0`, `XMP-tiff`, maker notes), so identity is `(group1, name)`.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct TagCapability {
     pub group1: String,
     pub name: String,
