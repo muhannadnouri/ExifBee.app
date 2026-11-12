@@ -22,6 +22,7 @@ const file = (formatWritable: boolean | null = true): FileMetadata => ({
   sourceFile: '/f/photo.jpg',
   error: null,
   unsupported: false,
+  writeAccess: true,
   formatWritable,
   warnings: [],
   tags: tagsOf(
@@ -86,7 +87,7 @@ describe('tag editor', () => {
     await user.type(dialog.getByRole('textbox', { name: 'New value' }), 'x<FileName');
     await user.click(stageButton());
     expect(onStage).toHaveBeenCalledWith(
-      { group: 'IFD0', name: 'Make', value: { kind: 'text', text: 'x<FileName' } },
+      { kind: 'set', group: 'IFD0', name: 'Make', value: { kind: 'text', text: 'x<FileName' } },
       'Canon',
     );
     expect(onClose).toHaveBeenCalled();
@@ -157,6 +158,44 @@ describe('tag editor', () => {
   });
 });
 
+// @req FR-009, SEC-005, UX-006
+describe('delete tag', () => {
+  const deleteButton = () => screen.queryByRole('button', { name: 'Delete tag' });
+
+  it('stages the deletion of one tag with the value it removes', async () => {
+    const user = userEvent.setup();
+    const { onStage, onClose } = open('IFD0:Make');
+    await user.click(deleteButton() as HTMLElement);
+    expect(onStage).toHaveBeenCalledWith(
+      { kind: 'deleteTag', group: 'IFD0', name: 'Make' },
+      'Canon',
+    );
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it('deletes a structure it cannot edit, but never a tag it cannot change', async () => {
+    const { dialog } = open('XMP-iptcCore:CreatorContactInfo');
+    expect(dialog.getByText(/The tag can still be deleted/)).toBeTruthy();
+    expect(deleteButton()).toBeTruthy();
+    expect(stageButton().disabled).toBe(true);
+    cleanup();
+    for (const key of ['Composite:ImageSize', 'System:FileName', 'MakerNotes:Copy1:Lens']) {
+      open(key);
+      expect(deleteButton()).toBeNull();
+      cleanup();
+    }
+    open(null);
+    expect(deleteButton()).toBeNull();
+  });
+
+  it('refuses edits and deletions on a file this user may not change', () => {
+    const { dialog } = open('IFD0:Make', { ...file(), writeAccess: false });
+    expect(dialog.getByText(/do not have permission to change this file/)).toBeTruthy();
+    expect(deleteButton()).toBeNull();
+    expect(stageButton().disabled).toBe(true);
+  });
+});
+
 // @req FR-008, FR-007, UX-006
 describe('add tag', () => {
   const listed = (group1: string, name: string) => ({
@@ -182,7 +221,7 @@ describe('add tag', () => {
     await user.type(dialog.getByRole('textbox', { name: 'Item 1' }), 'Ann');
     await user.click(stageButton());
     expect(onStage).toHaveBeenCalledWith(
-      { group: 'XMP-dc', name: 'Creator', value: { kind: 'list', items: ['Ann'] } },
+      { kind: 'set', group: 'XMP-dc', name: 'Creator', value: { kind: 'list', items: ['Ann'] } },
       null,
     );
   });

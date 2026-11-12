@@ -15,6 +15,7 @@ const photo: FileMetadata = {
   sourceFile: '/files/photo.jpg',
   error: null,
   unsupported: false,
+  writeAccess: true,
   formatWritable: true,
   warnings: [],
   tags: tagsOf(
@@ -51,6 +52,7 @@ describe('metadata inspector', () => {
         failure={null}
         reading={false}
         onEdit={noEdit}
+        onRemove={noEdit}
         staged={none}
       />,
     );
@@ -77,6 +79,7 @@ describe('metadata inspector', () => {
         failure={null}
         reading={false}
         onEdit={noEdit}
+        onRemove={noEdit}
         staged={none}
       />,
     );
@@ -119,6 +122,7 @@ describe('metadata inspector', () => {
         failure={null}
         reading={false}
         onEdit={noEdit}
+        onRemove={noEdit}
         staged={none}
       />,
     );
@@ -147,6 +151,7 @@ describe('metadata inspector', () => {
         failure={null}
         reading={false}
         onEdit={noEdit}
+        onRemove={noEdit}
         staged={none}
       />,
     );
@@ -179,6 +184,7 @@ describe('metadata inspector', () => {
         failure={null}
         reading={false}
         onEdit={noEdit}
+        onRemove={noEdit}
         staged={none}
       />,
     );
@@ -191,6 +197,7 @@ describe('metadata inspector', () => {
         failure={null}
         reading={false}
         onEdit={noEdit}
+        onRemove={noEdit}
         staged={none}
       />,
     );
@@ -207,6 +214,7 @@ describe('metadata inspector', () => {
         failure={null}
         reading={false}
         onEdit={noEdit}
+        onRemove={noEdit}
         staged={none}
       />,
     );

@@ -1,0 +1,27 @@
+.remove-group {
+  display: grid;
+  gap: 0.6rem;
+  min-width: min(28rem, 80vw);
+}
+
+.remove-group p {
+  margin: 0;
+}
+
+.remove-group-file {
+  overflow-wrap: anywhere;
+}
+
+/* Hundreds of tags must not push the buttons off screen. */
+.remove-group-list {
+  display: grid;
+  gap: 0.3rem;
+  max-height: 14rem;
+  margin: 0;
+  padding: 0.4rem 0.6rem;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  list-style: none;
+  overflow-wrap: anywhere;
+}

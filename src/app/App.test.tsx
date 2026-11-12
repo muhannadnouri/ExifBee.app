@@ -25,6 +25,8 @@ const ipc = vi.hoisted(() => ({
   pickFolder: vi.fn(),
   searchTags: vi.fn(),
   rawTextIsUtf8: vi.fn(),
+  previewRemoval: vi.fn(),
+  cancelRemovalPreview: vi.fn(),
   scanPickedFolder: vi.fn(),
   cancelScan: vi.fn(),
   appInfo: vi.fn(),
@@ -58,6 +60,7 @@ const file = (sourceFile: string, extra: Partial<FileMetadata> = {}): FileMetada
   error: null,
   unsupported: false,
   formatWritable: true,
+  writeAccess: true,
   warnings: [],
   tags: tagsOf({ 'File:FileType': 'JPEG', 'XMP-dc:Title': '<img src=x onerror=alert(1)>' }),
   ...extra,
@@ -612,6 +615,67 @@ describe('staging tag edits', () => {
     expect(drawer.getAllByRole('listitem')).toHaveLength(1);
     expect(metadata.getByRole('row', { name: /IFD0:Make/ }).textContent).not.toContain('staged');
     await user.click(screen.getByRole('button', { name: 'Discard all' }));
+    expect(screen.getByText(/No staged changes/)).toBeTruthy();
+  });
+
+  // @req FR-009, UX-006
+  it('stages a tag deletion and a group removal, and asks before discarding them', async () => {
+    const user = userEvent.setup();
+    ipc.rawTextIsUtf8.mockResolvedValue(true);
+    addFiles.mockResolvedValueOnce(imported(['/a.jpg']));
+    const read = file('/a.jpg', {
+      tags: tagsOf(
+        { 'IFD0:Make': 'Canon', 'XMP-dc:Title': 'T', 'XMP-dc:Rights': 'R' },
+        {
+          'IFD0:Make': ['EXIF', 'writable'],
+          'XMP-dc:Title': ['XMP', 'writable'],
+          'XMP-dc:Rights': ['XMP', 'writable'],
+        },
+      ),
+    });
+    ipc.previewRemoval.mockResolvedValue({
+      removed: read.tags.filter((tag) => tag.group1 === 'XMP-dc'),
+      messages: [],
+    });
+    answerReads([read]);
+    render(<App />);
+    await addViaMenu(user, 'Files…');
+    const metadata = within(screen.getByRole('region', { name: 'Metadata' }));
+
+    await user.click(await metadata.findByRole('button', { name: 'Edit IFD0:Make' }));
+    await user.click(screen.getByRole('button', { name: 'Delete tag' }));
+
+    // Remove offers the group selected in the tree.
+    await user.click(metadata.getByRole('button', { name: 'Remove' }));
+    const disabled = screen.getByRole('menuitem', { name: /Remove a group/ });
+    expect(disabled.getAttribute('aria-disabled')).toBe('true');
+    await user.click(disabled);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    await user.keyboard('{Escape}');
+    const tree = within(metadata.getByRole('navigation', { name: 'Tag groups' }));
+    await user.click(tree.getByRole('button', { name: /XMP-dc/ }));
+    await user.click(metadata.getByRole('button', { name: 'Remove' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Remove XMP-dc group…' }));
+    const dialog = within(screen.getByRole('dialog', { name: 'Remove XMP-dc group' }));
+    await user.click(await dialog.findByRole('button', { name: 'Stage removal of 2 tags' }));
+    expect(ipc.previewRemoval).toHaveBeenCalledWith(expect.any(String), 'XMP-dc');
+    expect(metadata.getByRole('row', { name: /XMP-dc:Rights/ }).textContent).toContain('staged');
+
+    await user.click(screen.getByRole('button', { name: /Actions \(2 staged\)/ }));
+    const drawer = within(screen.getByRole('region', { name: 'Staged for a.jpg' }));
+    expect(drawer.getAllByRole('listitem').map((item) => item.textContent)).toEqual([
+      'IFD0:Make Canon → (removed)Undo',
+      'XMP-dc group removes 2 tagsUndo',
+    ]);
+
+    // Discarding several changes cannot be undone, so it asks; keeping is the safe default.
+    await user.click(screen.getByRole('button', { name: 'Discard all' }));
+    const confirm = within(screen.getByRole('dialog', { name: 'Discard all staged changes?' }));
+    expect(document.activeElement?.textContent).toBe('Keep changes');
+    await user.click(confirm.getByRole('button', { name: 'Keep changes' }));
+    expect(drawer.getAllByRole('listitem')).toHaveLength(2);
+    await user.click(screen.getByRole('button', { name: 'Discard all' }));
+    await user.click(screen.getByRole('button', { name: 'Discard 2 changes' }));
     expect(screen.getByText(/No staged changes/)).toBeTruthy();
   });
 });

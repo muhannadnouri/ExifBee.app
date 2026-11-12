@@ -19,6 +19,8 @@ const COMMANDS: &[&str] = &[
     "prioritize_reads",
     "search_tags",
     "raw_text_is_utf8",
+    "preview_removal",
+    "cancel_removal_preview",
 ];
 
 fn main() {

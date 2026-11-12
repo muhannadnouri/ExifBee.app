@@ -15,7 +15,12 @@ unsupported: boolean,
  * Whether ExifTool can write this file's format at all (`-listwf`); `None` when unknown or
  * not yet annotated (see `CapabilitySnapshot::annotate`).
  */
-formatWritable: boolean | null, warnings: Array<string>, 
+formatWritable: boolean | null, 
+/**
+ * Whether this user may change the file in place (`platform::can_write`); `None` until the
+ * single-file read sets it.
+ */
+writeAccess: boolean | null, warnings: Array<string>, 
 /**
  * Every tag in ExifTool's output order, with full identity and typed value.
  */

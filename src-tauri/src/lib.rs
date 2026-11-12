@@ -22,6 +22,7 @@ pub fn run() {
             app.manage::<commands::FilesState>(Mutex::default());
             app.manage::<commands::ScansState>(Mutex::default());
             app.manage::<commands::ReadsState>(Mutex::default());
+            app.manage::<commands::PreviewState>(Mutex::default());
             app.manage::<commands::CapabilitiesState>(CapabilityCache::new(
                 &app.path().app_cache_dir()?,
             ));
@@ -49,6 +50,8 @@ pub fn run() {
             commands::prioritize_reads,
             commands::search_tags,
             commands::raw_text_is_utf8,
+            commands::preview_removal,
+            commands::cancel_removal_preview,
         ])
         .run(tauri::generate_context!())
         .expect("error while running ExifBee");

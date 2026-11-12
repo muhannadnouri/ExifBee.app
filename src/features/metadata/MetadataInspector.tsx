@@ -3,6 +3,7 @@ import { Button } from '../../components/atoms/Button';
 import { Select } from '../../components/atoms/Select';
 import { TextField } from '../../components/atoms/TextField';
 import { ErrorNotice } from '../../components/ErrorNotice';
+import { MenuButton } from '../../components/MenuButton';
 import type { AppError, FileMetadata, TagEntry, Writability } from '../../lib/ipc';
 import { GroupTree } from './GroupTree';
 import { filterTags, groupTree, sortTags, tagsAsText } from './tagFilter';
@@ -16,6 +17,8 @@ type Props = {
   reading: boolean;
   /** Edit a tag, or `null` to add one; must be stable (the inspector is memoized). */
   onEdit: (tag: TagEntry | null) => void;
+  /** Remove a group (`IFD0`, `XMP`) or `All` metadata; must be stable like `onEdit`. */
+  onRemove: (group: string) => void;
   /** `Group:Tag` of this file's staged changes; must keep its identity between unrelated renders. */
   staged: Set<string>;
 };
@@ -59,6 +62,7 @@ export const MetadataInspector = memo(function MetadataInspector({
   failure,
   reading,
   onEdit,
+  onRemove,
   staged,
 }: Props) {
   const [text, setText] = useState('');
@@ -102,6 +106,8 @@ export const MetadataInspector = memo(function MetadataInspector({
   }
 
   const filtered = query.trim() !== '' || scoped !== null || writable !== 'all';
+  // The tree's selection is what Remove offers; "Other" is not a group ExifTool knows.
+  const removable = scoped?.group ?? (scoped?.family === 'Other' ? undefined : scoped?.family);
   const clearFilters = () => {
     setText('');
     setScope(null);
@@ -162,7 +168,29 @@ export const MetadataInspector = memo(function MetadataInspector({
         >
           Copy visible
         </Button>
-        <Button onClick={() => onEdit(null)}>Add tag…</Button>
+        <div className="inspector-changes" role="group" aria-label="Change metadata">
+          <Button onClick={() => onEdit(null)}>Add tag…</Button>
+          <MenuButton
+            align="end"
+            items={[
+              removable
+                ? { label: `Remove ${removable} group…`, onSelect: () => onRemove(removable) }
+                : {
+                    label: 'Remove a group… (select one in the group list)',
+                    disabled: true,
+                    onSelect: () => undefined,
+                  },
+              {
+                label: 'Remove all metadata…',
+                separated: true,
+                danger: true,
+                onSelect: () => onRemove('All'),
+              },
+            ]}
+          >
+            Remove
+          </MenuButton>
+        </div>
         <span className="muted inspector-count">
           {rows.length === file.tags.length
             ? `${file.tags.length.toLocaleString('en-US')} tags`

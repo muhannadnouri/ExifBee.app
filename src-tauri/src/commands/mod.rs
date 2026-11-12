@@ -3,8 +3,11 @@
 
 use crate::adapter::exiftool::process::CancelToken;
 use crate::adapter::exiftool::read::{raw_is_utf8, read_metadata, FileMetadata};
+use crate::adapter::exiftool::removal::{preview_group_removal, RemovalPreview};
 use crate::adapter::exiftool::resolver::ExifTool;
+use crate::domain::edit::DeleteGroup;
 use crate::domain::error::{AppError, ErrorKind};
+use crate::platform::can_write;
 use crate::service::capabilities::{CapabilityCache, TagPage};
 use crate::service::dependency::{self, ExifToolStatus};
 use crate::service::files::{FileId, FileRegistry, ImportResult, ImportedFile, RejectedPath};
@@ -23,6 +26,8 @@ pub type FilesState = Mutex<FileRegistry>;
 pub type ScansState = Mutex<Scans>;
 pub type ReadsState = Mutex<ReadQueue>;
 pub type CapabilitiesState = CapabilityCache;
+/// The stop switch of the group-removal preview in progress, if any (one at a time).
+pub type PreviewState = Mutex<Option<CancelToken>>;
 
 /// Folder scans of this session: the options every new scan uses (set from the UI, also used for
 /// dropped folders) and a stop switch per running scan.
@@ -512,6 +517,7 @@ pub async fn read_file(app: AppHandle, id: FileId) -> Result<FileMetadata, AppEr
         let path = registered_path(&app, &id)?;
         let tool = current_tool(&app)?;
         let mut file = read_metadata(&tool, &path)?;
+        file.write_access = Some(can_write(&path));
         // Without the capability lists the read is still shown, with writability Unknown.
         match app
             .state::<CapabilitiesState>()
@@ -523,4 +529,50 @@ pub async fn read_file(app: AppHandle, id: FileId) -> Result<FileMetadata, AppEr
         Ok(file)
     })
     .await
+}
+
+/// What removing `group` (or `All`) from a file would take away, found by removing it from a
+/// copy in the app's cache folder (S4-T02). The file itself is only read.
+///
+/// A new preview stops the previous one; `cancel_removal_preview` stops it when the dialog
+/// closes, so a large video is not copied for nothing.
+#[tauri::command]
+pub async fn preview_removal(
+    app: AppHandle,
+    id: FileId,
+    group: String,
+) -> Result<RemovalPreview, AppError> {
+    let delete = DeleteGroup { group };
+    if let Some(problem) = delete.problem() {
+        return Err(AppError::new(ErrorKind::InvalidInput, problem));
+    }
+    let cancel = CancelToken::default();
+    if let Some(previous) = app
+        .state::<PreviewState>()
+        .lock()
+        .map_err(internal)?
+        .replace(cancel.clone())
+    {
+        previous.cancel();
+    }
+    blocking(move || {
+        let path = registered_path(&app, &id)?;
+        let tool = current_tool(&app)?;
+        let work_dir = app.path().app_cache_dir().map_err(internal)?;
+        Ok(preview_group_removal(
+            &tool, &path, &delete, &work_dir, &cancel,
+        )?)
+    })
+    .await
+}
+
+/// Stops the removal preview in progress; `false` if there was none.
+#[tauri::command]
+pub fn cancel_removal_preview(previews: State<'_, PreviewState>) -> Result<bool, AppError> {
+    Ok(previews
+        .lock()
+        .map_err(internal)?
+        .take()
+        .map(|token| token.cancel())
+        .is_some())
 }

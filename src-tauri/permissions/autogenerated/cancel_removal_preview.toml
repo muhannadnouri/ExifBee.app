@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-cancel-removal-preview"
+description = "Enables the cancel_removal_preview command without any pre-configured scope."
+commands.allow = ["cancel_removal_preview"]
+
+[[permission]]
+identifier = "deny-cancel-removal-preview"
+description = "Denies the cancel_removal_preview command without any pre-configured scope."
+commands.deny = ["cancel_removal_preview"]

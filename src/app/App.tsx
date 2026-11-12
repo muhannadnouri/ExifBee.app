@@ -9,8 +9,9 @@ import { MetadataInspector, TAG_SEARCH_ID } from '../features/metadata/MetadataI
 import { ShortcutsDialog } from '../features/help/ShortcutsDialog';
 import { SettingsDialog } from '../features/settings/SettingsDialog';
 import { ThemeSwitcher } from '../features/settings/ThemeSwitcher';
-import { StagedChanges, stagedKey } from '../features/edit/StagedChanges';
-import type { StagedEdit } from '../features/edit/StagedChanges';
+import { RemoveGroupDialog } from '../features/edit/RemoveGroupDialog';
+import { StagedChanges, changeLabel, stagedKey } from '../features/edit/StagedChanges';
+import type { Change, StagedEdit } from '../features/edit/StagedChanges';
 import { TagEditorDialog } from '../features/edit/TagEditorDialog';
 import { IconButton } from '../components/atoms/IconButton';
 import { Icon } from '../components/atoms/Icon';
@@ -45,7 +46,6 @@ import type {
   ReadUpdate,
   ScanOptions,
   ScanUpdate,
-  SetTag,
   TagEntry,
 } from '../lib/ipc';
 import './App.css';
@@ -130,6 +130,7 @@ export function App() {
   const [staged, setStaged] = useState<StagedEdit[]>([]);
   // The tag being edited in the selected file (`tag: null` = Add tag); closed when undefined.
   const [editing, setEditing] = useState<{ tag: TagEntry | null } | undefined>(undefined);
+  const [removing, setRemoving] = useState<string | undefined>(undefined);
   // Background read summaries by file ID. The Map is updated in place (setting a key is
   // idempotent, so a repeated updater is harmless) and rewrapped to re-render: copying 200,000
   // entries per update would cost more than the update itself.
@@ -463,17 +464,20 @@ export function App() {
 
   // Stable, so the memoized inspector does not redraw when unrelated state changes.
   const editTag = useCallback((tag: TagEntry | null) => setEditing({ tag }), []);
+  const removeGroup = useCallback((group: string) => setRemoving(group), []);
   const stagedHere = useMemo(
     () =>
       new Set(
         staged
           .filter((item) => item.fileId === selected)
-          .map(({ edit }) => `${edit.group}:${edit.name}`),
+          .flatMap(({ edit }) =>
+            edit.kind === 'deleteGroup' ? edit.removed : [`${edit.group}:${edit.name}`],
+          ),
       ),
     [staged, selected],
   );
-  /** Stages one change, replacing any earlier one to the same tag of the same file. */
-  const stage = (edit: SetTag, before: string | null) => {
+  /** Stages one change, replacing any earlier one to the same tag (or group) of the same file. */
+  const stage = (edit: Change, before: string | null) => {
     const entry = files.find((candidate) => candidate.id === selected);
     if (!entry) return;
     const item: StagedEdit = { fileId: entry.id, fileName: entry.name, edit, before };
@@ -483,7 +487,7 @@ export function App() {
       ),
       item,
     ]);
-    setStatus(`Staged ${edit.group}:${edit.name} for ${entry.name}; it is not written yet`);
+    setStatus(`Staged ${changeLabel(edit)} for ${entry.name}; it is not written yet`);
   };
 
   const drawerOpen = layout.actionsOpen || layout.logOpen;
@@ -609,6 +613,7 @@ export function App() {
             failure={failure}
             reading={selected !== null}
             onEdit={editTag}
+            onRemove={removeGroup}
             staged={stagedHere}
           />
         </section>
@@ -640,7 +645,7 @@ export function App() {
                     stagedKey(other.fileId, other.edit) !== stagedKey(item.fileId, item.edit),
                 ),
               );
-              setStatus(`Undid the staged change to ${item.edit.group}:${item.edit.name}`);
+              setStatus(`Undid the staged change to ${changeLabel(item.edit)}`);
             }}
             onDiscardAll={() => {
               setStaged([]);
@@ -698,6 +703,15 @@ export function App() {
           tag={editing.tag}
           onStage={stage}
           onClose={() => setEditing(undefined)}
+        />
+      )}
+      {removing && selected && file && (
+        <RemoveGroupDialog
+          fileId={selected}
+          file={file}
+          group={removing}
+          onStage={stage}
+          onClose={() => setRemoving(undefined)}
         />
       )}
       <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />

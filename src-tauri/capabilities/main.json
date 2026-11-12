@@ -17,6 +17,8 @@
     "allow-prioritize-reads",
     "allow-search-tags",
     "allow-raw-text-is-utf8",
+    "allow-preview-removal",
+    "allow-cancel-removal-preview",
     "core:event:allow-listen",
     "core:event:allow-unlisten"
   ]

@@ -96,12 +96,29 @@ export async function mockIpc(page: Page, reads: MockRead[] = SAMPLE_READS) {
         read_file: ({ id }) => {
           const read = registered.get(String(id));
           if (!read) throw { kind: 'ScopeViolation', message: `${String(id)} is not a file` };
-          return { unsupported: false, formatWritable: true, ...read } as Commands['read_file'];
+          return {
+            unsupported: false,
+            formatWritable: true,
+            writeAccess: true,
+            ...read,
+          } as Commands['read_file'];
         },
         pick_folder: () => '/home/user/Photos',
         scan_picked_folder: () => ++scans,
         cancel_scan: ({ scanId }) => cancelledScans.push(Number(scanId)) > 0,
         cancel_reads: () => readsCancelled.push(true) > 0,
+        // The real dry run is proven against ExifTool (tag_delete.rs); here, the group's tags.
+        preview_removal: ({ id, group }) => ({
+          removed: (
+            (registered.get(String(id))?.tags ?? []) as Commands['read_file']['tags']
+          ).filter(
+            (tag) =>
+              !['System', 'ExifTool', 'Composite'].includes(tag.group1) &&
+              (group === 'All' || tag.group1 === group || tag.group0 === group),
+          ),
+          messages: [],
+        }),
+        cancel_removal_preview: () => false,
         search_tags: () => ({
           total: 2,
           tags: [

@@ -31,3 +31,8 @@
 .staged-change {
   overflow-wrap: anywhere;
 }
+
+.staged-high-impact {
+  color: var(--danger);
+  font-weight: 600;
+}

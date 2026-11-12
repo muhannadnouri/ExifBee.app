@@ -131,3 +131,11 @@
 .tags .icon-button {
   font-size: 0.95rem;
 }
+
+/* Commands that change the file's metadata, kept together and apart from viewing ones. */
+.inspector-changes {
+  display: flex;
+  gap: 0.5rem;
+  padding-inline-start: 0.75rem;
+  border-inline-start: 1px solid var(--border);
+}

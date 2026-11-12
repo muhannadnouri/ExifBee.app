@@ -38,6 +38,9 @@ pub struct FileMetadata {
     /// Whether ExifTool can write this file's format at all (`-listwf`); `None` when unknown or
     /// not yet annotated (see `CapabilitySnapshot::annotate`).
     pub format_writable: Option<bool>,
+    /// Whether this user may change the file in place (`platform::can_write`); `None` until the
+    /// single-file read sets it.
+    pub write_access: Option<bool>,
     pub warnings: Vec<String>,
     /// Every tag in ExifTool's output order, with full identity and typed value.
     pub tags: Vec<TagEntry>,
@@ -285,6 +288,7 @@ fn parse_file(mut object: Map<String, Value>) -> Result<FileMetadata, ReadError>
         source_file,
         unsupported: error.as_deref() == Some(UNKNOWN_FILE_TYPE),
         format_writable: None,
+        write_access: None,
         error,
         warnings,
         tags,

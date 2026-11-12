@@ -5,8 +5,9 @@ import { Notice } from '../../components/atoms/Notice';
 import { TextField } from '../../components/atoms/TextField';
 import { Dialog } from '../../components/Dialog';
 import { rawTextIsUtf8, searchTags } from '../../lib/ipc';
-import type { FileMetadata, SetTag, TagCapability, TagEntry } from '../../lib/ipc';
+import type { FileMetadata, TagCapability, TagEntry } from '../../lib/ipc';
 import { valueText } from '../metadata/tagFilter';
+import type { Change } from './StagedChanges';
 import './TagEditorDialog.css';
 
 type Props = {
@@ -14,31 +15,41 @@ type Props = {
   file: FileMetadata;
   /** The tag to edit, or `null` to add one the file does not have yet. */
   tag: TagEntry | null;
-  /** Called with the edit and the value it replaces (`null` for a new tag). */
-  onStage: (edit: SetTag, before: string | null) => void;
+  /** Called with the change and the value it replaces (`null` for a new tag). */
+  onStage: (edit: Change, before: string | null) => void;
   onClose: () => void;
 };
 
 type Target = { group: string; name: string; tag: TagEntry | null; listed: TagCapability | null };
 
 // Wording from SPEC §5.5.
-const READ_ONLY = 'This tag or file format is not writable through the selected ExifTool version.';
+export const READ_ONLY =
+  'This tag or file format is not writable through the selected ExifTool version.';
+/** ExifTool would replace a read-only file anyway, so ExifBee refuses first (DEC-029). */
+export const NO_PERMISSION =
+  'You do not have permission to change this file or the folder it is in, so it is left as it is.';
 const UNKNOWN =
   'Write support could not be confirmed. ExifTool may reject this operation; the original will be backed up.';
 
-/** Why this tag cannot be edited here, if it cannot (nothing is ever staged silently). */
+/** Why this tag cannot be changed or deleted at all, if it cannot (nothing is staged silently). */
 function blocker(file: FileMetadata, target: Target): string | null {
   const { group, name, tag } = target;
+  if (file.writeAccess === false) return NO_PERMISSION;
   if (group === 'System')
     return 'File system properties (name, folder, dates, permissions) change the file itself, so they are not edited as tags.';
   if (tag?.writable === 'readOnly' || (!tag && file.formatWritable === false)) return READ_ONLY;
-  if (tag && tag.value.kind !== 'text' && tag.value.kind !== 'list')
-    return 'Structures and binary data need dedicated operations, which are not available yet.';
-  if (tag?.value.kind === 'list' && tag.value.items.some((item) => item.kind !== 'text'))
-    return 'This list holds structures, which need dedicated operations not available yet.';
   const same = file.tags.filter((other) => other.group1 === group && other.name === name);
   if (same.length > 1)
     return `This file has ${same.length} ${group}:${name} tags; ExifTool cannot change one of them on its own.`;
+  return null;
+}
+
+/** Why this tag's value cannot be edited as text, if it cannot; it may still be deleted. */
+function valueBlocker(tag: TagEntry | null): string | null {
+  if (tag && tag.value.kind !== 'text' && tag.value.kind !== 'list')
+    return 'Structures and binary data need dedicated operations to edit, which are not available yet. The tag can still be deleted.';
+  if (tag?.value.kind === 'list' && tag.value.items.some((item) => item.kind !== 'text'))
+    return 'This list holds structures, which need dedicated operations to edit. The tag can still be deleted.';
   return null;
 }
 
@@ -111,6 +122,7 @@ export function TagEditorDialog({ fileId, file, tag, onStage, onClose }: Props) 
   };
 
   const problem = target ? blocker(file, target) : null;
+  const valueProblem = target && !problem ? valueBlocker(target.tag) : null;
   const unknown =
     target &&
     !problem &&
@@ -121,7 +133,8 @@ export function TagEditorDialog({ fileId, file, tag, onStage, onClose }: Props) 
   const listInvalid = asList && (items.length === 0 || items.some((item) => item === ''));
   const unchanged =
     target?.tag !== null && target?.tag !== undefined && before === after && isList === asList;
-  const canStage = target && !problem && bytesOk === true && !listInvalid && !unchanged;
+  const canStage =
+    target && !problem && !valueProblem && bytesOk === true && !listInvalid && !unchanged;
 
   const moveItem = (from: number, to: number) =>
     setItems((current) => {
@@ -138,7 +151,7 @@ export function TagEditorDialog({ fileId, file, tag, onStage, onClose }: Props) 
         onSubmit={(event) => {
           event.preventDefault();
           if (canStage && target) {
-            onStage({ group: target.group, name: target.name, value }, before);
+            onStage({ kind: 'set', group: target.group, name: target.name, value }, before);
             onClose();
           }
         }}
@@ -178,14 +191,15 @@ export function TagEditorDialog({ fileId, file, tag, onStage, onClose }: Props) 
               </strong>
             </p>
             {problem && <Notice tone="warning">{problem}</Notice>}
-            {!problem && bytesOk === false && (
+            {valueProblem && <Notice tone="info">{valueProblem}</Notice>}
+            {!problem && !valueProblem && bytesOk === false && (
               <Notice tone="warning">
                 This value holds bytes that are not text, so what is shown is not what is stored. It
                 cannot be edited from here without losing them.
               </Notice>
             )}
             {unknown && <Notice tone="warning">{UNKNOWN}</Notice>}
-            {!problem && bytesOk !== false && (
+            {!problem && !valueProblem && bytesOk !== false && (
               <>
                 {!target.tag && (
                   <fieldset className="tag-editor-kind">
@@ -257,7 +271,18 @@ export function TagEditorDialog({ fileId, file, tag, onStage, onClose }: Props) 
             )}
           </>
         )}
-        <div className="tag-editor-actions">
+        <div className="dialog-actions">
+          {target?.tag && !problem && (
+            <Button
+              className="button-danger dialog-actions-start"
+              onClick={() => {
+                onStage({ kind: 'deleteTag', group: target.group, name: target.name }, before);
+                onClose();
+              }}
+            >
+              Delete tag
+            </Button>
+          )}
           <Button onClick={onClose}>Cancel</Button>
           <Button type="submit" className="button-primary" disabled={!canStage}>
             Stage change

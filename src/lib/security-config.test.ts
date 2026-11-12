@@ -28,7 +28,7 @@ describe('renderer permissions (least privilege)', () => {
     const handler = [
       ...(/generate_handler!\[([^\]]*)\]/.exec(libRs)?.[1] ?? '').matchAll(/commands::(\w+)/g),
     ].map((match) => match[1] ?? '');
-    expect(manifest.length).toBe(13);
+    expect(manifest.length).toBe(15);
     expect(sorted(manifest)).toEqual(sorted(handler));
     expect(sorted(manifest)).toEqual(sorted(COMMAND_NAMES));
 

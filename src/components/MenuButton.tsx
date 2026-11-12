@@ -4,16 +4,32 @@ import { Button } from './atoms/Button';
 import { Icon } from './atoms/Icon';
 import './MenuButton.css';
 
-export type MenuItem = { label: string; shortcut?: string; onSelect: () => void };
+export type MenuItem = {
+  label: string;
+  shortcut?: string;
+  /** Shown but inert, so users learn the command exists (WAI-ARIA keeps it focusable). */
+  disabled?: boolean;
+  /** Starts a separate section, e.g. to keep a destructive command apart. */
+  separated?: boolean;
+  /** Removes or discards something: drawn in the danger color. */
+  danger?: boolean;
+  onSelect: () => void;
+};
 
-type Props = { children: ReactNode; items: MenuItem[]; disabled?: boolean };
+type Props = {
+  children: ReactNode;
+  items: MenuItem[];
+  disabled?: boolean;
+  /** `end` opens the menu leftwards, for buttons near the window's right edge. */
+  align?: 'start' | 'end';
+};
 
 /**
  * Button that opens a short menu (WAI-ARIA menu button pattern): Enter, Space or ↓ open it on
  * the first item, ↑/↓/Home/End move, Esc closes and returns focus, and a click outside or Tab
  * closes it. Choosing an item closes the menu first, then runs the item.
  */
-export function MenuButton({ children, items, disabled }: Props) {
+export function MenuButton({ children, items, disabled, align = 'start' }: Props) {
   const [open, setOpen] = useState(false);
   const id = useId();
   const root = useRef<HTMLDivElement>(null);
@@ -73,15 +89,22 @@ export function MenuButton({ children, items, disabled }: Props) {
         <Icon name="chevron-down" />
       </Button>
       {open && (
-        <ul className="menu" role="menu" id={id} onKeyDown={onMenuKey}>
+        <ul className={`menu menu-${align}`} role="menu" id={id} onKeyDown={onMenuKey}>
           {items.map((item) => (
-            <li key={item.label} role="none">
+            <li
+              key={item.label}
+              role="none"
+              className={item.separated ? 'menu-separated' : undefined}
+            >
               <button
                 type="button"
                 role="menuitem"
                 tabIndex={-1}
+                className={item.danger ? 'menu-danger' : undefined}
                 aria-keyshortcuts={item.shortcut?.replaceAll('Ctrl', 'Control')}
+                aria-disabled={item.disabled || undefined}
                 onClick={() => {
+                  if (item.disabled) return;
                   setOpen(false);
                   button.current?.focus();
                   item.onSelect();

@@ -34,3 +34,13 @@
   border-color: var(--border-strong);
   background: var(--surface-raised);
 }
+
+/* Removes or discards something; never the default focus. */
+.button-danger {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.button-danger:disabled {
+  border-color: var(--border-strong);
+}

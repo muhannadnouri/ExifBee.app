@@ -7,7 +7,7 @@
 //! only search `PATH` until their stages.
 
 use std::ffi::OsStr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -47,6 +47,32 @@ pub fn exiftool_candidates(path_var: Option<&OsStr>) -> Vec<PathBuf> {
         }
     }
     candidates
+}
+
+/// Whether this user may change `path` in place: write access to the file and to its folder.
+///
+/// Why both: ExifTool writes a new file next to the original and renames it over, so it changes
+/// a read-only (0444) file in a writable folder without complaint (probed on 13.55), and fails
+/// in a read-only folder. ExifBee refuses both before staging (S4-T02, SEC-005).
+pub fn can_write(path: &Path) -> bool {
+    let folder = path.parent().unwrap_or(path);
+    allows_write(path) && allows_write(folder)
+}
+
+#[cfg(unix)]
+fn allows_write(path: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let Ok(path) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
+        return false;
+    };
+    // SAFETY: `path` is a valid NUL-terminated string that outlives the call.
+    unsafe { libc::access(path.as_ptr(), libc::W_OK) == 0 }
+}
+
+#[cfg(not(unix))]
+fn allows_write(path: &Path) -> bool {
+    // shortcut: ignores Windows ACLs, only the read-only attribute; revisit with Windows (S8).
+    std::fs::metadata(path).is_ok_and(|meta| !meta.permissions().readonly())
 }
 
 #[cfg(test)]

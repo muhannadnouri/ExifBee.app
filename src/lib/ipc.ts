@@ -9,6 +9,7 @@ import type { ImportResult } from './bindings/ImportResult';
 import type { ReadUpdate } from './bindings/ReadUpdate';
 import type { ScanOptions } from './bindings/ScanOptions';
 import type { TagPage } from './bindings/TagPage';
+import type { RemovalPreview } from './bindings/RemovalPreview';
 import type { ScanUpdate } from './bindings/ScanUpdate';
 import { toAppError } from './errors';
 
@@ -21,7 +22,9 @@ export type {
   ScanOptions,
   ScanUpdate,
 };
-export type { ReadUpdate, TagPage };
+export type { ReadUpdate, RemovalPreview, TagPage };
+export type { DeleteGroup } from './bindings/DeleteGroup';
+export type { DeleteTag } from './bindings/DeleteTag';
 export type { EditValue } from './bindings/EditValue';
 export type { SetTag } from './bindings/SetTag';
 export type { TagCapability } from './bindings/TagCapability';
@@ -57,6 +60,8 @@ export type Commands = {
   prioritize_reads: null;
   search_tags: TagPage;
   raw_text_is_utf8: boolean;
+  preview_removal: RemovalPreview;
+  cancel_removal_preview: boolean;
 };
 
 /** Runtime list of `Commands` keys; the `Record` type keeps it complete. */
@@ -74,6 +79,8 @@ export const COMMAND_NAMES = Object.keys({
   prioritize_reads: true,
   search_tags: true,
   raw_text_is_utf8: true,
+  preview_removal: true,
+  cancel_removal_preview: true,
 } satisfies Record<keyof Commands, true>) as (keyof Commands)[];
 
 /** The only `invoke` call in the app (lint-enforced); rejections always become an `AppError`. */
@@ -107,6 +114,10 @@ export const searchTags = (query: string) => call('search_tags', { query });
 /** Whether a tag's stored bytes are valid UTF-8, so editing may start from its shown text. */
 export const rawTextIsUtf8 = (id: string, group: string, name: string) =>
   call('raw_text_is_utf8', { id, group, name });
+/** Tags that removing `group` (or `All`) would take away, found on a private copy; the file is only read. */
+export const previewRemoval = (id: string, group: string) => call('preview_removal', { id, group });
+/** Stops the removal preview in progress; `false` if there was none. */
+export const cancelRemovalPreview = () => call('cancel_removal_preview');
 
 /** Calls `handler` with every folder scan update (new files, problems, running totals, end state). */
 export const onScanProgress = (handler: (update: ScanUpdate) => void) =>

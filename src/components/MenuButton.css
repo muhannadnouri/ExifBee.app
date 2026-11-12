@@ -47,3 +47,22 @@
   font: inherit;
   color: var(--text-muted);
 }
+
+.menu [role='menuitem'][aria-disabled='true'] {
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.menu-separated {
+  margin-top: 0.25rem;
+  padding-top: 0.25rem;
+  border-top: 1px solid var(--border);
+}
+
+.menu-end {
+  inset-inline: auto 0;
+}
+
+.menu [role='menuitem'].menu-danger:not([aria-disabled='true']) {
+  color: var(--danger);
+}

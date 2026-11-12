@@ -25,3 +25,16 @@
 .dialog-body {
   padding: 0.75rem;
 }
+
+/* A dialog's buttons: main action last; a destructive one stands apart at the start (NN/g). */
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.dialog-actions-start {
+  margin-inline-end: auto;
+}

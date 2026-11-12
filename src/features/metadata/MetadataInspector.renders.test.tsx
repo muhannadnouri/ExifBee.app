@@ -23,6 +23,7 @@ const file = (sourceFile: string): FileMetadata => ({
   sourceFile,
   error: null,
   unsupported: false,
+  writeAccess: true,
   formatWritable: true,
   warnings: [],
   tags: tagsOf({ 'IFD0:Make': 'Canon' }),
@@ -34,13 +35,27 @@ describe('inspector re-render guard', () => {
     const shown = file('/a.jpg');
     drawn.count = 0;
     const { rerender } = render(
-      <MetadataInspector file={shown} failure={null} reading onEdit={noEdit} staged={none} />,
+      <MetadataInspector
+        file={shown}
+        failure={null}
+        reading
+        onEdit={noEdit}
+        onRemove={noEdit}
+        staged={none}
+      />,
     );
     expect(drawn.count).toBe(1);
     // e.g. scan or read progress, several times a second: same props, no redraw.
     for (let i = 0; i < 20; i++)
       rerender(
-        <MetadataInspector file={shown} failure={null} reading onEdit={noEdit} staged={none} />,
+        <MetadataInspector
+          file={shown}
+          failure={null}
+          reading
+          onEdit={noEdit}
+          onRemove={noEdit}
+          staged={none}
+        />,
       );
     expect(drawn.count).toBe(1);
 
@@ -50,6 +65,7 @@ describe('inspector re-render guard', () => {
         failure={null}
         reading
         onEdit={noEdit}
+        onRemove={noEdit}
         staged={none}
       />,
     );

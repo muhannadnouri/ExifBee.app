@@ -3,7 +3,7 @@
 //! line or interpreted by a shell, so spaces, quotes, `;`, `&`, `$`, backticks, newlines or a
 //! leading `-` in a file name are just bytes of that name.
 
-use crate::domain::edit::{valid_name, EditValue, SetTag};
+use crate::domain::edit::{valid_name, DeleteGroup, DeleteTag, EditValue, SetTag};
 use std::ffi::OsString;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -99,6 +99,43 @@ impl Args {
                 }
             }
         }
+        Ok(self)
+    }
+
+    /// Appends the deletion of one tag (S4-T02): `-IFD0:Make=` (an empty assignment deletes).
+    pub fn delete_tag(mut self, delete: &DeleteTag) -> Result<Self, ArgsError> {
+        if let Some(problem) = delete.problem() {
+            return Err(ArgsError::Edit(problem));
+        }
+        self.items
+            .push(format!("-{}:{}=", delete.group, delete.name).into());
+        Ok(self)
+    }
+
+    /// Appends the removal of a group, `-XMP-dc:All=`, or of all metadata, `-all=` (S4-T02).
+    pub fn delete_group(mut self, delete: &DeleteGroup) -> Result<Self, ArgsError> {
+        if let Some(problem) = delete.problem() {
+            return Err(ArgsError::Edit(problem));
+        }
+        let arg = if delete.is_all() {
+            "-all=".to_string()
+        } else {
+            format!("-{}:All=", delete.group)
+        };
+        self.items.push(arg.into());
+        Ok(self)
+    }
+
+    /// Appends `-o <file>`: write the result to a new file instead of changing the target.
+    ///
+    /// Only for previews into ExifBee's own private folder (S4-T02); the path must be absolute,
+    /// so it cannot be read as an option.
+    pub fn output(mut self, file: &Path) -> Result<Self, ArgsError> {
+        if !file.is_absolute() {
+            return Err(ArgsError::RelativeFile(file.to_path_buf()));
+        }
+        self.items.push("-o".into());
+        self.items.push(file.as_os_str().to_owned());
         Ok(self)
     }
 
