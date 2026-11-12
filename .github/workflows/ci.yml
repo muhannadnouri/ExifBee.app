@@ -178,6 +178,41 @@ jobs:
             test-results/
           if-no-files-found: ignore
 
+  # Native desktop E2E (SPEC §6.1.1 tier 5, DEC-027): the built app in WebKitGTK with real ExifTool.
+  native-e2e:
+    needs: checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      EXIFTOOL_VERSION: '13.55'
+      EXIFTOOL_SHA256: 5f4c81d34ad406538c2871ad72dbfceb5d9b412b2f16cbbeb4d712d270846667
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends $APT_PACKAGES webkit2gtk-driver xvfb dbus
+      - name: Install official ExifTool release
+        run: |
+          curl -fsSL -o exiftool.tar.gz \
+            "https://sourceforge.net/projects/exiftool/files/Image-ExifTool-$EXIFTOOL_VERSION.tar.gz/download"
+          echo "$EXIFTOOL_SHA256  exiftool.tar.gz" | sha256sum -c -
+          tar -xzf exiftool.tar.gz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/Image-ExifTool-$EXIFTOOL_VERSION" >> "$GITHUB_PATH"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Install pinned Rust toolchain and tauri-driver
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+          cargo install tauri-driver --version 2.1.0 --locked
+      - run: npm ci
+      - run: npm run test:e2e:desktop
+
   # Performance baseline (S3-T06, SPEC §6.4): a report for people, on shared runners whose timings
   # are unreliable, so it never gates a change. Not compared with the committed baseline, which
   # comes from another machine; compare the uploaded reports with each other.

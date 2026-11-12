@@ -9,6 +9,10 @@ rust-version = "1.90"
 [lib]
 name = "exifbee_lib"
 
+[features]
+# Test seam for native E2E only (DEC-027); never enabled in a build that ships.
+e2e = []
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

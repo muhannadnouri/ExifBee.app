@@ -4,7 +4,7 @@ import reactHooks from 'eslint-plugin-react-hooks';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['dist', 'src-tauri/target', 'src-tauri/gen', 'src/lib/bindings'] },
+  { ignores: ['dist', 'src-tauri/target', 'src-tauri/gen', 'src/lib/bindings', 'target-e2e'] },
   {
     files: ['**/*.{ts,tsx,js}'],
     extends: [
@@ -14,7 +14,10 @@ export default tseslint.config(
     ],
     languageOptions: { globals: globals.browser },
   },
-  { files: ['scripts/**', 'tests/performance/**'], languageOptions: { globals: globals.node } },
+  {
+    files: ['scripts/**', 'tests/performance/**', 'tests/e2e/**'],
+    languageOptions: { globals: globals.node },
+  },
   // All Rust calls go through the typed layer in src/lib/ipc.ts (S1-T05, SEC-008).
   {
     files: ['src/**/*.{ts,tsx}'],

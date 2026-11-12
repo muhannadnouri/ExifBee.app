@@ -319,6 +319,13 @@ pub fn files_dropped(app: &AppHandle, paths: Vec<PathBuf>) {
 #[tauri::command]
 pub async fn pick_folder(app: AppHandle) -> Result<Option<String>, AppError> {
     blocking(move || {
+        #[cfg(feature = "e2e")]
+        if let Some(mut paths) = e2e_picked("EXIFBEE_E2E_PICK_FOLDER") {
+            let path = paths.pop().ok_or_else(|| internal("no e2e folder"))?;
+            let shown = path.display().to_string();
+            app.state::<ScansState>().lock().map_err(internal)?.picked = Some(path);
+            return Ok(Some(shown));
+        }
         let Some(picked) = app.dialog().file().blocking_pick_folder() else {
             return Ok(None);
         };
@@ -360,6 +367,16 @@ pub fn cancel_scan(scans: State<'_, ScansState>, scan_id: u32) -> Result<bool, A
         .is_some())
 }
 
+/// Test seam for native E2E (S3-T07, DEC-027), compiled only with the default-off `e2e` feature:
+/// the OS file picker is a separate window a WebDriver test cannot drive, so the test process
+/// names the "picked" paths, one per line, in `variable`. Everything after the picker is the
+/// real code path. `tests/e2e/run.sh` proves a normal build does not contain this.
+#[cfg(feature = "e2e")]
+fn e2e_picked(variable: &str) -> Option<Vec<PathBuf>> {
+    let value = std::env::var(variable).ok()?;
+    Some(value.lines().map(PathBuf::from).collect())
+}
+
 /// Lets the user pick any number of files of any type and adds them to the session; `None` if
 /// cancelled. Nothing is read here: reads happen per file through `read_file` (FR-003).
 ///
@@ -368,6 +385,10 @@ pub fn cancel_scan(scans: State<'_, ScansState>, scan_id: u32) -> Result<bool, A
 #[tauri::command]
 pub async fn add_files(app: AppHandle) -> Result<Option<ImportResult>, AppError> {
     blocking(move || {
+        #[cfg(feature = "e2e")]
+        if let Some(paths) = e2e_picked("EXIFBEE_E2E_PICK_FILES") {
+            return Ok(Some(register(&app, paths)?));
+        }
         let Some(picked) = app.dialog().file().blocking_pick_files() else {
             return Ok(None);
         };

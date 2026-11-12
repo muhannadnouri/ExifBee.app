@@ -59,6 +59,8 @@ describe('renderer permissions (least privilege)', () => {
     for (const plugin of ['shell', 'fs', 'http', 'opener', 'process', 'websocket', 'upload']) {
       expect(cargoToml).not.toMatch(new RegExp(`^tauri-plugin-${plugin}\\s*=`, 'm'));
     }
+    // The native E2E seam (DEC-027) is opt-in; run.sh checks a normal binary does not contain it.
+    expect(cargoToml).not.toMatch(/^default\s*=/m);
     expect(tauriConf.app.withGlobalTauri ?? false).toBe(false);
     expect(tauriConf.app.security.assetProtocol?.enable ?? false).toBe(false);
   });
