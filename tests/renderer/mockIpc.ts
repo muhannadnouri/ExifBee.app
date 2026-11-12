@@ -1,6 +1,6 @@
 import { expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
-import type { Commands } from '../../src/lib/ipc';
+import type { Commands, StagedFile } from '../../src/lib/ipc';
 import { tagsOf } from '../support/tags';
 
 // Plain shape for addInitScript: the recursive JsonValue in FileMetadata is too deep for
@@ -119,6 +119,67 @@ export async function mockIpc(page: Page, reads: MockRead[] = SAMPLE_READS) {
           messages: [],
         }),
         cancel_removal_preview: () => false,
+        // The real checks are proven against ExifTool (plan.rs); here, a plan from the mock's
+        // own tags, and a file named *locked* is skipped the way a 0444 file would be.
+        plan_changes: ({ files }) => ({
+          files: (files as StagedFile[]).map((staged) => {
+            const read = registered.get(staged.id);
+            const tags = (read?.tags ?? []) as Commands['read_file']['tags'];
+            const text = (tag: Commands['read_file']['tags'][number] | undefined) =>
+              tag === undefined
+                ? null
+                : tag.value.kind === 'text'
+                  ? tag.value.text
+                  : tag.value.kind === 'list'
+                    ? tag.value.items
+                        .map((item) => (item.kind === 'text' ? item.text : ''))
+                        .join(', ')
+                    : '';
+            const locked = read?.sourceFile.includes('locked') ?? false;
+            return {
+              id: staged.id,
+              name: read?.sourceFile.split('/').pop() ?? staged.id,
+              target: read?.sourceFile ?? '',
+              link: null,
+              problems: locked
+                ? [
+                    'You do not have permission to change this file or the folder it is in, so it is left as it is.',
+                  ]
+                : [],
+              warnings: [],
+              backup: locked ? null : `${read?.sourceFile}_original`,
+              changes: staged.changes.map((change) => {
+                if (change.kind === 'deleteGroup')
+                  return {
+                    target: change.group === 'All' ? 'All metadata' : `${change.group} group`,
+                    before: null,
+                    after: null,
+                    removes: tags
+                      .filter(
+                        (tag) =>
+                          change.group === 'All' ||
+                          tag.group1 === change.group ||
+                          tag.group0 === change.group,
+                      )
+                      .filter((tag) => !['System', 'ExifTool', 'Composite'].includes(tag.group1))
+                      .map((tag) => `${tag.group1}:${tag.name}`),
+                  };
+                const tag = tags.find((t) => t.group1 === change.group && t.name === change.name);
+                return {
+                  target: `${change.group}:${change.name}`,
+                  before: text(tag),
+                  after:
+                    change.kind === 'deleteTag'
+                      ? null
+                      : change.value.kind === 'text'
+                        ? change.value.text
+                        : change.value.items.join(', '),
+                  removes: [],
+                };
+              }),
+            };
+          }),
+        }),
         search_tags: () => ({
           total: 2,
           tags: [

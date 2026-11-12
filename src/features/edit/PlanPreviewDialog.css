@@ -1,0 +1,35 @@
+.plan {
+  display: grid;
+  gap: 0.6rem;
+  min-width: min(30rem, 80vw);
+}
+
+.plan p {
+  margin: 0;
+}
+
+.plan-file {
+  display: grid;
+  gap: 0.4rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--border);
+}
+
+.plan-file h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  overflow-wrap: anywhere;
+}
+
+.plan-path,
+.plan-changes {
+  overflow-wrap: anywhere;
+}
+
+.plan-changes,
+.plan-file ul {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0;
+  padding-inline-start: 1.1rem;
+}

@@ -9,6 +9,7 @@ import { MetadataInspector, TAG_SEARCH_ID } from '../features/metadata/MetadataI
 import { ShortcutsDialog } from '../features/help/ShortcutsDialog';
 import { SettingsDialog } from '../features/settings/SettingsDialog';
 import { ThemeSwitcher } from '../features/settings/ThemeSwitcher';
+import { PlanPreviewDialog } from '../features/edit/PlanPreviewDialog';
 import { RemoveGroupDialog } from '../features/edit/RemoveGroupDialog';
 import { StagedChanges, changeLabel, stagedKey } from '../features/edit/StagedChanges';
 import type { Change, StagedEdit } from '../features/edit/StagedChanges';
@@ -47,6 +48,7 @@ import type {
   ScanOptions,
   ScanUpdate,
   TagEntry,
+  StagedFile,
 } from '../lib/ipc';
 import './App.css';
 
@@ -131,6 +133,7 @@ export function App() {
   // The tag being edited in the selected file (`tag: null` = Add tag); closed when undefined.
   const [editing, setEditing] = useState<{ tag: TagEntry | null } | undefined>(undefined);
   const [removing, setRemoving] = useState<string | undefined>(undefined);
+  const [reviewing, setReviewing] = useState<StagedFile[] | undefined>(undefined);
   // Background read summaries by file ID. The Map is updated in place (setting a key is
   // idempotent, so a repeated updater is harmless) and rewrapped to re-render: copying 200,000
   // entries per update would cost more than the update itself.
@@ -647,6 +650,19 @@ export function App() {
               );
               setStatus(`Undid the staged change to ${changeLabel(item.edit)}`);
             }}
+            onReview={() =>
+              setReviewing(
+                [...new Set(staged.map((item) => item.fileId))].map((id) => ({
+                  id,
+                  // The dry-run list is the renderer's own; Rust plans the removal again.
+                  changes: staged
+                    .filter((item) => item.fileId === id)
+                    .map(({ edit }) =>
+                      edit.kind === 'deleteGroup' ? { kind: edit.kind, group: edit.group } : edit,
+                    ),
+                })),
+              )
+            }
             onDiscardAll={() => {
               setStaged([]);
               setStatus('Discarded all staged changes');
@@ -705,6 +721,7 @@ export function App() {
           onClose={() => setEditing(undefined)}
         />
       )}
+      {reviewing && <PlanPreviewDialog files={reviewing} onClose={() => setReviewing(undefined)} />}
       {removing && selected && file && (
         <RemoveGroupDialog
           fileId={selected}

@@ -40,6 +40,8 @@ type Props = {
   staged: StagedEdit[];
   onUndo: (item: StagedEdit) => void;
   onDiscardAll: () => void;
+  /** Opens the plan: what applying the staged changes would do, checked in Rust. */
+  onReview: () => void;
 };
 
 /**
@@ -47,7 +49,7 @@ type Props = {
  * written: applying them is the plan and confirmation step (S4-T03, S4-T07). Discarding more
  * than one change cannot be undone, so it asks first.
  */
-export function StagedChanges({ staged, onUndo, onDiscardAll }: Props) {
+export function StagedChanges({ staged, onUndo, onDiscardAll, onReview }: Props) {
   const [confirming, setConfirming] = useState(false);
   const keep = useRef<HTMLButtonElement>(null);
   // The safe choice gets focus; this runs after the dialog's own showModal (child effects first).
@@ -98,9 +100,14 @@ export function StagedChanges({ staged, onUndo, onDiscardAll }: Props) {
           </section>
         );
       })}
-      <Button onClick={() => (staged.length > 1 ? setConfirming(true) : onDiscardAll())}>
-        Discard all
-      </Button>
+      <div className="staged-actions">
+        <Button className="button-primary" onClick={onReview}>
+          Review changes…
+        </Button>
+        <Button onClick={() => (staged.length > 1 ? setConfirming(true) : onDiscardAll())}>
+          Discard all
+        </Button>
+      </div>
       <Dialog
         id="discard-staged"
         title="Discard all staged changes?"

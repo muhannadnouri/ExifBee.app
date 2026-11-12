@@ -27,6 +27,7 @@ const ipc = vi.hoisted(() => ({
   rawTextIsUtf8: vi.fn(),
   previewRemoval: vi.fn(),
   cancelRemovalPreview: vi.fn(),
+  planChanges: vi.fn(),
   scanPickedFolder: vi.fn(),
   cancelScan: vi.fn(),
   appInfo: vi.fn(),
@@ -667,6 +668,24 @@ describe('staging tag edits', () => {
       'IFD0:Make Canon → (removed)Undo',
       'XMP-dc group removes 2 tagsUndo',
     ]);
+
+    // Review sends Rust the staged changes per file; Rust plans group removals again itself.
+    ipc.planChanges.mockResolvedValue({ files: [] });
+    await user.click(screen.getByRole('button', { name: 'Review changes…' }));
+    expect(ipc.planChanges).toHaveBeenCalledWith([
+      {
+        id: expect.any(String),
+        changes: [
+          { kind: 'deleteTag', group: 'IFD0', name: 'Make' },
+          { kind: 'deleteGroup', group: 'XMP-dc' },
+        ],
+      },
+    ]);
+    await user.click(
+      within(screen.getByRole('dialog', { name: 'Review changes' })).getAllByRole('button', {
+        name: 'Close',
+      })[1] as HTMLElement,
+    );
 
     // Discarding several changes cannot be undone, so it asks; keeping is the safe default.
     await user.click(screen.getByRole('button', { name: 'Discard all' }));

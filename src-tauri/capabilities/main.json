@@ -19,6 +19,7 @@
     "allow-raw-text-is-utf8",
     "allow-preview-removal",
     "allow-cancel-removal-preview",
+    "allow-plan-changes",
     "core:event:allow-listen",
     "core:event:allow-unlisten"
   ]

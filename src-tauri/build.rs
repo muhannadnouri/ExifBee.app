@@ -21,6 +21,7 @@ const COMMANDS: &[&str] = &[
     "raw_text_is_utf8",
     "preview_removal",
     "cancel_removal_preview",
+    "plan_changes",
 ];
 
 fn main() {

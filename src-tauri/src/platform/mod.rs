@@ -59,6 +59,25 @@ pub fn can_write(path: &Path) -> bool {
     allows_write(path) && allows_write(folder)
 }
 
+/// Bytes this user may still write on the file system holding `path`; `None` if unknown.
+#[cfg(unix)]
+pub fn free_bytes(path: &Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let path = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
+    let mut stats: libc::statvfs = unsafe { std::mem::zeroed() };
+    // SAFETY: `path` is NUL-terminated and `stats` is a valid, writable statvfs.
+    if unsafe { libc::statvfs(path.as_ptr(), &mut stats) } != 0 {
+        return None;
+    }
+    Some(stats.f_bavail as u64 * stats.f_frsize as u64)
+}
+
+/// shortcut: free space is not checked on other platforms until S7/S8.
+#[cfg(not(unix))]
+pub fn free_bytes(_path: &Path) -> Option<u64> {
+    None
+}
+
 #[cfg(unix)]
 fn allows_write(path: &Path) -> bool {
     use std::os::unix::ffi::OsStrExt;

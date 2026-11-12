@@ -161,3 +161,22 @@ impl DeleteGroup {
         self.group == ALL_METADATA
     }
 }
+
+/// One staged change as the renderer sends it for planning (S4-T03), tagged by `kind`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub enum Change {
+    Set(SetTag),
+    DeleteTag(DeleteTag),
+    DeleteGroup(DeleteGroup),
+}
+
+/// A file's staged changes, by the ID the registry issued.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct StagedFile {
+    pub id: String,
+    pub changes: Vec<Change>,
+}

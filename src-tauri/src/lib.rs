@@ -52,6 +52,7 @@ pub fn run() {
             commands::raw_text_is_utf8,
             commands::preview_removal,
             commands::cancel_removal_preview,
+            commands::plan_changes,
         ])
         .run(tauri::generate_context!())
         .expect("error while running ExifBee");

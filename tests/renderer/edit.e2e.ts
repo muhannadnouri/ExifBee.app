@@ -139,3 +139,37 @@ test('deletes a tag, removes a group or all metadata, and asks before discarding
   await confirm.getByRole('button', { name: 'Discard 3 changes' }).click();
   await expect(page.getByText(/No staged changes/)).toBeVisible();
 });
+
+// @req FR-010, SEC-004, SEC-006, UX-004
+test('reviews staged changes as a plan per file, with skipped files explained', async ({
+  page,
+}) => {
+  await mockIpc(page, [PHOTO, { ...PHOTO, sourceFile: '/home/user/locked.jpg' }]);
+  await page.goto('/');
+  await addVia(page, 'Files…');
+  const metadata = page.getByRole('region', { name: 'Metadata' });
+  const editor = page.getByRole('dialog', { name: 'Edit tag' });
+  await metadata.getByRole('button', { name: 'Edit IFD0:Make' }).click();
+  await editor.getByRole('textbox', { name: 'New value' }).fill('Nikon');
+  await editor.getByRole('button', { name: 'Stage change' }).click();
+  await addVia(page, 'Files…');
+  await page.getByRole('option', { name: /locked.jpg/ }).click();
+  await metadata.getByRole('button', { name: 'Edit IFD0:Make' }).click();
+  await editor.getByRole('button', { name: 'Delete tag' }).click();
+
+  await page.getByRole('button', { name: /Actions \(2 staged\)/ }).click();
+  await page.getByRole('button', { name: 'Review changes…' }).click();
+  const review = page.getByRole('dialog', { name: 'Review changes' });
+  await expect(review.getByText(/would change/)).toHaveText('1 file would change; 1 skipped.');
+  const photo = review.getByRole('region', { name: 'Plan for photo.jpg' });
+  await expect(photo.getByRole('listitem')).toHaveText(['IFD0:Make Canon → Nikon']);
+  await expect(photo).toContainText('Backup of the original: /home/user/photo.jpg_original');
+  await expect(review.getByRole('region', { name: 'Plan for locked.jpg' })).toContainText(
+    'Skipped, nothing will change in this file',
+  );
+  await expect(review).toContainText('Nothing has been written.');
+  expect(await violations(page)).toEqual([]);
+  await page.keyboard.press('Escape');
+  await expect(review).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Review changes…' })).toBeFocused();
+});

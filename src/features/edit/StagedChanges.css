@@ -36,3 +36,9 @@
   color: var(--danger);
   font-weight: 600;
 }
+
+.staged-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}

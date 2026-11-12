@@ -3,7 +3,7 @@
 //! files the user chose through a Rust-owned dialog or drop.
 
 use serde::Serialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -53,7 +53,51 @@ pub struct FileRegistry {
     entries: Vec<Entry>,
     /// Canonical paths already registered, so a symlink and its target count as one file.
     known: HashSet<PathBuf>,
+    /// What each file was when the user last inspected it (`read_file`), for the plan's
+    /// staleness check (S4-T03).
+    identities: HashMap<FileId, FileIdentity>,
     next: u64,
+}
+
+/// Which file a path is right now: where it really lives and its size and modification time.
+///
+/// Why device and inode too: a file replaced by another of the same size and time (or a symlink
+/// pointed elsewhere) must not pass as the file the user inspected (SPEC §4.5, SEC-006).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileIdentity {
+    /// The canonical path: symlinks resolved. Writes go here, never through a link.
+    pub real_path: PathBuf,
+    pub device: u64,
+    pub inode: u64,
+    pub size: u64,
+    pub modified_ns: i128,
+}
+
+impl FileIdentity {
+    /// The identity of the file `path` leads to now; an error if it is missing or unreadable.
+    pub fn of(path: &Path) -> std::io::Result<Self> {
+        let real_path = fs::canonicalize(path)?;
+        let meta = fs::metadata(&real_path)?;
+        let modified_ns = meta
+            .modified()?
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_nanos() as i128);
+        #[cfg(unix)]
+        let (device, inode) = {
+            use std::os::unix::fs::MetadataExt;
+            (meta.dev(), meta.ino())
+        };
+        // shortcut: no file index on other platforms yet; size + time + path only until S8.
+        #[cfg(not(unix))]
+        let (device, inode) = (0, 0);
+        Ok(Self {
+            real_path,
+            device,
+            inode,
+            size: meta.len(),
+            modified_ns,
+        })
+    }
 }
 
 impl FileRegistry {
@@ -111,6 +155,16 @@ impl FileRegistry {
             self.entries.push(Entry { id, path });
         }
         result
+    }
+
+    /// Remembers what file `id` was when it was read for inspection.
+    pub fn record(&mut self, id: &str, identity: FileIdentity) {
+        self.identities.insert(id.to_string(), identity);
+    }
+
+    /// What file `id` was when last read for inspection; `None` if it never was.
+    pub fn identity(&self, id: &str) -> Option<&FileIdentity> {
+        self.identities.get(id)
     }
 
     /// The path behind an ID this registry issued; `None` for anything else.

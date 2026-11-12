@@ -9,7 +9,9 @@ import type { ImportResult } from './bindings/ImportResult';
 import type { ReadUpdate } from './bindings/ReadUpdate';
 import type { ScanOptions } from './bindings/ScanOptions';
 import type { TagPage } from './bindings/TagPage';
+import type { PlanPreview } from './bindings/PlanPreview';
 import type { RemovalPreview } from './bindings/RemovalPreview';
+import type { StagedFile } from './bindings/StagedFile';
 import type { ScanUpdate } from './bindings/ScanUpdate';
 import { toAppError } from './errors';
 
@@ -22,7 +24,9 @@ export type {
   ScanOptions,
   ScanUpdate,
 };
-export type { ReadUpdate, RemovalPreview, TagPage };
+export type { PlanPreview, ReadUpdate, RemovalPreview, StagedFile, TagPage };
+export type { FilePlan } from './bindings/FilePlan';
+export type { PlannedChange } from './bindings/PlannedChange';
 export type { DeleteGroup } from './bindings/DeleteGroup';
 export type { DeleteTag } from './bindings/DeleteTag';
 export type { EditValue } from './bindings/EditValue';
@@ -62,6 +66,7 @@ export type Commands = {
   raw_text_is_utf8: boolean;
   preview_removal: RemovalPreview;
   cancel_removal_preview: boolean;
+  plan_changes: PlanPreview;
 };
 
 /** Runtime list of `Commands` keys; the `Record` type keeps it complete. */
@@ -81,6 +86,7 @@ export const COMMAND_NAMES = Object.keys({
   raw_text_is_utf8: true,
   preview_removal: true,
   cancel_removal_preview: true,
+  plan_changes: true,
 } satisfies Record<keyof Commands, true>) as (keyof Commands)[];
 
 /** The only `invoke` call in the app (lint-enforced); rejections always become an `AppError`. */
@@ -118,6 +124,8 @@ export const rawTextIsUtf8 = (id: string, group: string, name: string) =>
 export const previewRemoval = (id: string, group: string) => call('preview_removal', { id, group });
 /** Stops the removal preview in progress; `false` if there was none. */
 export const cancelRemovalPreview = () => call('cancel_removal_preview');
+/** Re-checks every staged file and change in Rust and says what applying them would do; writes nothing. */
+export const planChanges = (files: StagedFile[]) => call('plan_changes', { files });
 
 /** Calls `handler` with every folder scan update (new files, problems, running totals, end state). */
 export const onScanProgress = (handler: (update: ScanUpdate) => void) =>

@@ -5,12 +5,15 @@ use crate::adapter::exiftool::process::CancelToken;
 use crate::adapter::exiftool::read::{raw_is_utf8, read_metadata, FileMetadata};
 use crate::adapter::exiftool::removal::{preview_group_removal, RemovalPreview};
 use crate::adapter::exiftool::resolver::ExifTool;
-use crate::domain::edit::DeleteGroup;
+use crate::domain::edit::{DeleteGroup, StagedFile};
 use crate::domain::error::{AppError, ErrorKind};
 use crate::platform::can_write;
 use crate::service::capabilities::{CapabilityCache, TagPage};
 use crate::service::dependency::{self, ExifToolStatus};
-use crate::service::files::{FileId, FileRegistry, ImportResult, ImportedFile, RejectedPath};
+use crate::service::files::{
+    FileId, FileIdentity, FileRegistry, ImportResult, ImportedFile, RejectedPath,
+};
+use crate::service::plan::{build_plan, PlanInput, PlanPreview};
 use crate::service::reads::{self, ReadQueue};
 use crate::service::scan::{self, ScanOptions};
 use crate::service::settings::SettingsStore;
@@ -26,7 +29,7 @@ pub type FilesState = Mutex<FileRegistry>;
 pub type ScansState = Mutex<Scans>;
 pub type ReadsState = Mutex<ReadQueue>;
 pub type CapabilitiesState = CapabilityCache;
-/// The stop switch of the group-removal preview in progress, if any (one at a time).
+/// The stop switch of the dry run in progress (a removal preview or a plan), one at a time.
 pub type PreviewState = Mutex<Option<CancelToken>>;
 
 /// Folder scans of this session: the options every new scan uses (set from the UI, also used for
@@ -516,7 +519,15 @@ pub async fn read_file(app: AppHandle, id: FileId) -> Result<FileMetadata, AppEr
     blocking(move || {
         let path = registered_path(&app, &id)?;
         let tool = current_tool(&app)?;
+        // Taken before reading: if the file changes during the read, the plan sees it as stale.
+        let identity = FileIdentity::of(&path);
         let mut file = read_metadata(&tool, &path)?;
+        if let Ok(identity) = identity {
+            app.state::<FilesState>()
+                .lock()
+                .map_err(internal)?
+                .record(&id, identity);
+        }
         file.write_access = Some(can_write(&path));
         // Without the capability lists the read is still shown, with writability Unknown.
         match app
@@ -575,4 +586,74 @@ pub fn cancel_removal_preview(previews: State<'_, PreviewState>) -> Result<bool,
         .take()
         .map(|token| token.cancel())
         .is_some())
+}
+
+/// Most files and changes one plan may hold; far above real use, a bound on renderer input.
+const MAX_PLAN_FILES: usize = 10_000;
+const MAX_FILE_CHANGES: usize = 1_000;
+
+/// What applying the staged changes would do (S4-T03): every file re-checked and every change
+/// re-validated in Rust, with the exact arguments kept here. Only reads; writes nothing.
+///
+/// An ID the registry did not issue rejects the whole request (`ScopeViolation`): the renderer
+/// can only plan for files the user added. Shares the dry-run stop switch with
+/// `preview_removal`, so `cancel_removal_preview` also stops a plan's group-removal checks.
+#[tauri::command]
+pub async fn plan_changes(app: AppHandle, files: Vec<StagedFile>) -> Result<PlanPreview, AppError> {
+    if files.len() > MAX_PLAN_FILES
+        || files
+            .iter()
+            .any(|file| file.changes.len() > MAX_FILE_CHANGES)
+    {
+        return Err(AppError::new(
+            ErrorKind::InvalidInput,
+            "too many staged changes for one plan",
+        ));
+    }
+    let inputs = {
+        let state = app.state::<FilesState>();
+        let registry = state.lock().map_err(internal)?;
+        files
+            .into_iter()
+            .map(|file| {
+                let chosen = registry.path(&file.id).map(PathBuf::from).ok_or_else(|| {
+                    AppError::new(
+                        ErrorKind::ScopeViolation,
+                        format!("{} is not a file added in this session", file.id),
+                    )
+                })?;
+                Ok(PlanInput {
+                    recorded: registry.identity(&file.id).cloned(),
+                    id: file.id,
+                    chosen,
+                    changes: file.changes,
+                })
+            })
+            .collect::<Result<Vec<_>, AppError>>()?
+    };
+    let cancel = CancelToken::default();
+    if let Some(previous) = app
+        .state::<PreviewState>()
+        .lock()
+        .map_err(internal)?
+        .replace(cancel.clone())
+    {
+        previous.cancel();
+    }
+    blocking(move || {
+        let tool = current_tool(&app)?;
+        let snapshot = app
+            .state::<CapabilitiesState>()
+            .snapshot(&tool, &CancelToken::default())
+            .ok();
+        let work_dir = app.path().app_cache_dir().map_err(internal)?;
+        Ok(build_plan(
+            &tool,
+            snapshot.as_deref(),
+            inputs,
+            &work_dir,
+            &cancel,
+        )?)
+    })
+    .await
 }
