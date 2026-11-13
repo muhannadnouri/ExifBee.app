@@ -20,7 +20,7 @@ grep -q EXIFBEE_E2E "$target/debug/exifbee"
 
 # Xvfb has no GPU; without this WebKitGTK can show a blank window.
 # Bounded twice over: each step times out, and the whole run stops after 10 minutes.
-echo 'starting the native journey'
+echo 'starting the native journeys (read, write)'
 WEBKIT_DISABLE_DMABUF_RENDERER=1 EXIFBEE_APP="$target/debug/exifbee" exec timeout 600 \
   xvfb-run -a -s '-screen 0 1280x800x24' dbus-run-session -- \
-  node --test --test-concurrency=1 --test-timeout=180000 tests/e2e/read-journey.e2e.mjs
+  node --test --test-concurrency=1 --test-timeout=180000 tests/e2e/*.e2e.mjs
