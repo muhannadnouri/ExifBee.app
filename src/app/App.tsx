@@ -498,11 +498,14 @@ export function App() {
   const applied = (result: ApplyResult) => {
     const done = new Set(
       result.files
-        .filter(({ outcome }) => outcome === 'changed' || outcome === 'unchanged')
+        .filter(({ outcome }) => outcome !== 'failed' && outcome !== 'skipped')
         .map(({ id }) => id),
     );
     setStaged((current) => current.filter((item) => !done.has(item.fileId)));
-    const changed = result.files.filter(({ outcome }) => outcome === 'changed').map(({ id }) => id);
+    // A mismatch was still written: read it again too, so the table shows what is there.
+    const changed = result.files
+      .filter(({ outcome }) => outcome === 'changed' || outcome === 'mismatch')
+      .map(({ id }) => id);
     setReads((current) =>
       Object.fromEntries(Object.entries(current).filter(([id]) => !changed.includes(id))),
     );
@@ -515,10 +518,20 @@ export function App() {
     for (const file of result.files) {
       const path = files.find(({ id }) => id === file.id)?.path ?? file.name;
       const note = file.message ? `: ${file.message}` : '';
-      if (file.outcome === 'changed')
-        addLog('info', `Changed ${path}${file.backup ? `; backup: ${file.backup}` : note}`);
+      const backup = file.backup ? `; backup: ${file.backup}` : note;
+      if (file.outcome === 'changed') addLog('info', `Changed and verified ${path}${backup}`);
+      else if (file.outcome === 'mismatch')
+        addLog(
+          'warning',
+          `Written, but not as planned: ${path}${backup}: ${file.details.join('; ')}`,
+        );
       else if (file.outcome === 'unchanged') addLog('info', `No change made to ${path}`);
-      else addLog(file.outcome === 'failed' ? 'error' : 'warning', `Not changed: ${path}${note}`);
+      else if (file.outcome === 'failed')
+        addLog(
+          'error',
+          `Not changed: ${path}${note} (ExifTool exit status ${file.exitCode ?? 'none'})`,
+        );
+      else addLog('warning', `Not changed: ${path}${note}`);
       for (const warning of file.warnings) addLog('warning', `${path}: ${warning}`);
     }
     setStatus(`Applied changes: ${changed.length} of ${result.files.length} files changed`);

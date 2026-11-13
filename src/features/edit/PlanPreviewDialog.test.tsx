@@ -2,7 +2,7 @@
 import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { FilePlan, StagedFile } from '../../lib/ipc';
+import type { ApplyResult, FilePlan, StagedFile } from '../../lib/ipc';
 import { PlanPreviewDialog } from './PlanPreviewDialog';
 
 const ipc = vi.hoisted(() => ({
@@ -121,7 +121,7 @@ describe('plan preview', () => {
 
 // @req FR-011, FR-014, SEC-004, SEC-005
 describe('apply', () => {
-  const result = {
+  const result: ApplyResult = {
     files: [
       {
         id: 'f1',
@@ -130,6 +130,8 @@ describe('apply', () => {
         message: null,
         backup: '/real/photo.jpg_original',
         warnings: ['[minor] Fixed something'],
+        details: [],
+        exitCode: 0,
       },
       {
         id: 'f2',
@@ -138,6 +140,8 @@ describe('apply', () => {
         message: 'The file changed after it was read.',
         backup: null,
         warnings: [],
+        details: [],
+        exitCode: 0,
       },
     ],
   };
@@ -160,7 +164,7 @@ describe('apply', () => {
     );
     expect(onApplied).toHaveBeenCalledWith(result);
     const done = within(dialog.getByRole('region', { name: 'Result for link.jpg' }));
-    expect(done.getByText('Changed')).toBeTruthy();
+    expect(done.getByText('Changed and verified')).toBeTruthy();
     expect(done.getByText('Backup of the original: /real/photo.jpg_original')).toBeTruthy();
     expect(done.getByText('ExifTool warning: [minor] Fixed something')).toBeTruthy();
     expect(dialog.getByRole('region', { name: 'Result for old.jpg' }).textContent).toContain(
@@ -190,6 +194,73 @@ describe('apply', () => {
     await user.click(screen.getByRole('button', { name: 'Apply without backups…' }));
     await user.click(screen.getByRole('button', { name: 'Overwrite originals' }));
     expect(ipc.applyPlan).toHaveBeenCalledWith(5, 'overwriteOriginals');
+  });
+
+  // @req FR-017
+  it('never counts a write that does not read back as planned as a success', async () => {
+    const user = userEvent.setup();
+    ipc.planChanges.mockResolvedValue({ planId: 8, files: [ready] });
+    ipc.applyPlan.mockResolvedValue({
+      files: [
+        {
+          id: 'f1',
+          name: 'link.jpg',
+          outcome: 'mismatch',
+          message: null,
+          backup: '/real/photo.jpg_original',
+          warnings: ["Can't convert IFD0:Orientation (not in PrintConv)"],
+          details: ['IFD0:Orientation: planned 6, not in the file'],
+          exitCode: 0,
+        },
+        {
+          id: 'f2',
+          name: 'old.jpg',
+          outcome: 'failed',
+          message: 'Writing of ZIP files is not yet supported',
+          backup: null,
+          warnings: [],
+          details: [],
+          exitCode: 1,
+        },
+      ],
+    });
+    render(<PlanPreviewDialog files={staged} onApplied={noop} onClose={noop} />);
+    await user.click(await screen.findByRole('button', { name: 'Apply to 1 file' }));
+    expect((await screen.findByText(/not as planned/)).textContent).toBe(
+      '0 changed, 1 not as planned, 1 failed.',
+    );
+    const mismatch = within(screen.getByRole('region', { name: 'Result for link.jpg' }));
+    expect(mismatch.getByText('Written, but it does not read back as planned')).toBeTruthy();
+    expect(mismatch.getByRole('listitem').textContent).toBe(
+      'IFD0:Orientation: planned 6, not in the file',
+    );
+    expect(mismatch.getByText(/Backup of the original/)).toBeTruthy();
+    expect(mismatch.getByText(/Can't convert IFD0:Orientation/)).toBeTruthy();
+    const failed = within(screen.getByRole('region', { name: 'Result for old.jpg' }));
+    expect(failed.getByText('ExifTool exit status 1')).toBeTruthy();
+  });
+
+  it('notes values ExifTool stored in another form on a verified change', async () => {
+    const user = userEvent.setup();
+    ipc.planChanges.mockResolvedValue({ planId: 9, files: [ready] });
+    ipc.applyPlan.mockResolvedValue({
+      files: [
+        {
+          id: 'f1',
+          name: 'link.jpg',
+          outcome: 'changed',
+          message: null,
+          backup: null,
+          warnings: [],
+          details: ['ExifIFD:ExposureTime: stored as 1/200'],
+          exitCode: 0,
+        },
+      ],
+    });
+    render(<PlanPreviewDialog files={staged} onApplied={noop} onClose={noop} />);
+    await user.click(await screen.findByRole('button', { name: 'Apply to 1 file' }));
+    expect(await screen.findByText('Changed and verified')).toBeTruthy();
+    expect(screen.getByText('ExifIFD:ExposureTime: stored as 1/200')).toBeTruthy();
   });
 
   it('offers nothing to apply when every file is skipped, and shows a refused apply', async () => {

@@ -50,3 +50,8 @@
   max-height: 12rem;
   overflow: auto;
 }
+
+.plan-outcome-mismatch strong,
+.plan-differences {
+  color: var(--danger);
+}

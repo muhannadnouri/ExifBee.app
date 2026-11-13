@@ -3,10 +3,12 @@
 //! run, so every argument was validated and shown to the user first.
 
 use crate::adapter::exiftool::process::{self, CancelToken};
+use crate::adapter::exiftool::read::read_metadata;
 use crate::adapter::exiftool::resolver::ExifTool;
 use crate::platform::can_write;
 use crate::service::files::{FileId, FileIdentity};
 use crate::service::plan::{sibling, write_args, FilePlan, PlanPreview};
+use crate::service::verify::verify;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -28,8 +30,10 @@ pub enum BackupPolicy {
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub enum Outcome {
-    /// ExifTool reported the file updated (values are verified by reading back in S4-T05).
+    /// Written, and reading it back shows exactly the planned result (S4-T05).
     Changed,
+    /// Written, but reading it back does not show the planned result; never a success.
+    Mismatch,
     /// ExifTool ran and changed nothing.
     Unchanged,
     /// ExifTool refused or failed; the file is as it was.
@@ -51,6 +55,10 @@ pub struct FileOutcome {
     pub backup: Option<String>,
     /// ExifTool's warnings for this file.
     pub warnings: Vec<String>,
+    /// For a mismatch, each difference; for a verified change, values stored in another form.
+    pub details: Vec<String>,
+    /// ExifTool's exit status, when it ran.
+    pub exit_code: Option<i32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -96,6 +104,8 @@ fn apply_file(tool: &ExifTool, file: &FilePlan, policy: BackupPolicy) -> FileOut
         message: None,
         backup: None,
         warnings: Vec::new(),
+        details: Vec::new(),
+        exit_code: None,
     };
     let (Some(identity), true) = (&file.identity, file.ready()) else {
         result.message = Some(file.problems.join(" "));
@@ -145,6 +155,7 @@ fn apply_file(tool: &ExifTool, file: &FilePlan, policy: BackupPolicy) -> FileOut
             return result;
         }
     };
+    result.exit_code = output.status.code();
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     result.warnings = stderr
@@ -173,16 +184,34 @@ fn apply_file(tool: &ExifTool, file: &FilePlan, policy: BackupPolicy) -> FileOut
                 errors.join(" ")
             });
         }
-        Outcome::Changed if overwrite => {
-            result.message = Some("No backup was kept, as chosen.".into());
+        Outcome::Changed => {
+            if overwrite {
+                result.message = Some("No backup was kept, as chosen.".into());
+            } else if had_backup {
+                result.message = Some(format!(
+                    "An earlier backup was kept as it was ({}); this version has no backup.",
+                    backup.display()
+                ));
+            } else {
+                result.backup = Some(backup.display().to_string());
+            }
+            // ExifTool's "updated" is not proof: a value it cannot convert is only a warning.
+            match read_metadata(tool, target) {
+                Ok(after) => {
+                    let check = verify(file, &after.tags);
+                    if check.problems.is_empty() {
+                        result.details = check.notes;
+                    } else {
+                        result.outcome = Outcome::Mismatch;
+                        result.details = check.problems;
+                    }
+                }
+                Err(error) => {
+                    result.outcome = Outcome::Mismatch;
+                    result.details = vec![format!("The file could not be read back: {error}")];
+                }
+            }
         }
-        Outcome::Changed if had_backup => {
-            result.message = Some(format!(
-                "An earlier backup was kept as it was ({}); this version has no backup.",
-                backup.display()
-            ));
-        }
-        Outcome::Changed => result.backup = Some(backup.display().to_string()),
         _ => {}
     }
     result

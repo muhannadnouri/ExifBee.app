@@ -499,3 +499,144 @@ fn files_changed_after_review_or_refused_are_left_as_they_are() {
         json!("Nikon")
     );
 }
+
+// @req FR-017, FR-011, FR-008, FR-009
+#[test]
+fn writes_are_verified_by_reading_back_on_several_formats() {
+    let planner = Planner::new();
+    let mut ws = Workspace::new("verify-formats");
+    let jpg = ws.copy("metadata.jpg");
+    let pdf = ws.copy("metadata.pdf");
+    let png = ws.copy("metadata.png");
+    let xmp = ws.copy("sidecar.xmp");
+    let list = Change::Set(SetTag {
+        group: "XMP-iptcExt".into(),
+        name: "PersonInImage".into(),
+        value: EditValue::List {
+            items: vec!["Ann".into(), "Bo, Jr.".into()],
+        },
+    });
+    let plan = preview(
+        &planner,
+        vec![
+            (
+                &jpg,
+                vec![
+                    set("IFD0", "Make", "Nikon"),
+                    delete_tag("IFD0", "Artist"),
+                    // Removed, then set again: the new Title must be there, the rest gone.
+                    delete_group("XMP-dc"),
+                    set("XMP-dc", "Title", "Kept"),
+                    list,
+                ],
+            ),
+            (&pdf, vec![set("PDF", "Author", "Someone")]),
+            (&png, vec![set("PNG", "Title", "PNG ✓")]),
+            (&xmp, vec![delete_tag("XMP-dc", "Title")]),
+        ],
+    );
+    let result = apply_plan(&planner.engine.tool, &plan, BackupPolicy::KeepBackups);
+    for file in &result.files {
+        assert_eq!(file.outcome, Outcome::Changed, "{file:#?}");
+        assert!(file.details.is_empty(), "{file:#?}");
+        assert_eq!(file.exit_code, Some(0));
+    }
+}
+
+// @req FR-017
+#[test]
+fn values_exiftool_stores_in_another_form_verify_with_a_note() {
+    let planner = Planner::new();
+    let mut ws = Workspace::new("verify-normalized");
+    let photo = ws.copy("metadata.jpg");
+    let plan = preview(
+        &planner,
+        vec![(
+            &photo,
+            vec![
+                set("ExifIFD", "ExposureTime", "0.005"),
+                set("ExifIFD", "FNumber", "5"),
+                set("ExifIFD", "DateTimeOriginal", "2026:1:2 3:4:5"),
+                set("IFD0", "Make", " Spaced "),
+            ],
+        )],
+    );
+    let result = apply_plan(&planner.engine.tool, &plan, BackupPolicy::KeepBackups);
+    let file = &result.files[0];
+    assert_eq!(file.outcome, Outcome::Changed, "{file:#?}");
+    for note in [
+        "ExifIFD:ExposureTime: stored as 1/200",
+        "ExifIFD:FNumber: stored as 5.0",
+        "ExifIFD:DateTimeOriginal: stored as 2026:01:02 03:04:05",
+        "IFD0:Make: stored as  Spaced",
+    ] {
+        assert!(
+            file.details.iter().any(|d| d == note),
+            "missing {note:?}: {file:#?}"
+        );
+    }
+}
+
+// @req FR-017, FR-014
+#[test]
+fn a_write_exiftool_calls_successful_but_that_skipped_a_value_is_a_mismatch() {
+    let planner = Planner::new();
+    let mut ws = Workspace::new("verify-mismatch");
+    let photo = ws.copy("metadata.jpg");
+    // ExifTool cannot convert "6" for Orientation: it warns, writes Make, and exits 0.
+    let plan = preview(
+        &planner,
+        vec![(
+            &photo,
+            vec![
+                set("IFD0", "Make", "Nikon"),
+                set("IFD0", "Orientation", "6"),
+            ],
+        )],
+    );
+    assert!(plan.files[0].ready(), "{}", problems(&plan.files[0]));
+    let result = apply_plan(&planner.engine.tool, &plan, BackupPolicy::KeepBackups);
+    let file = &result.files[0];
+    assert_eq!(file.outcome, Outcome::Mismatch, "{file:#?}");
+    assert_eq!(file.exit_code, Some(0));
+    assert_eq!(
+        file.details,
+        ["IFD0:Orientation: planned 6, not in the file"]
+    );
+    assert!(file
+        .warnings
+        .iter()
+        .any(|w| w.contains("Can't convert IFD0:Orientation")));
+    // The file did change, so its backup is reported and restorable.
+    let backup = PathBuf::from(file.backup.as_deref().unwrap());
+    assert_eq!(sha256(&backup), sha256(&golden_dir().join("metadata.jpg")));
+    assert_eq!(
+        value(&planner.engine.read(&photo), "IFD0:Make"),
+        json!("Nikon")
+    );
+}
+
+// @req FR-017
+#[test]
+fn a_tag_the_plan_did_not_touch_that_changed_is_a_mismatch() {
+    let planner = Planner::new();
+    let mut ws = Workspace::new("verify-untouched");
+    let photo = ws.copy("metadata.jpg");
+    let mut plan = preview(&planner, vec![(&photo, vec![set("IFD0", "Make", "Nikon")])]);
+    // Stand in for an unexpected side effect: the planning read remembers another Artist.
+    let artist = plan.files[0]
+        .before
+        .iter_mut()
+        .find(|tag| tag.key == "IFD0:Artist")
+        .unwrap();
+    artist.value = exifbee_lib::domain::metadata::MetadataValue::Text {
+        text: "Someone else".into(),
+    };
+    let result = apply_plan(&planner.engine.tool, &plan, BackupPolicy::KeepBackups);
+    let file = &result.files[0];
+    assert_eq!(file.outcome, Outcome::Mismatch, "{file:#?}");
+    assert_eq!(
+        file.details,
+        ["IFD0:Artist: changed unexpectedly, was Someone else, now ExifBee Fixtures"]
+    );
+}

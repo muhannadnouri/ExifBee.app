@@ -214,6 +214,6 @@ test('applies a reviewed plan, with backups unless overwriting is confirmed', as
   await expect(staged).toHaveAccessibleName('Staged for locked.jpg');
   await page.getByRole('button', { name: 'Log' }).click();
   await expect(page.getByRole('log')).toContainText(
-    'Changed /home/user/photo.jpg; backup: /home/user/photo.jpg_original',
+    'Changed and verified /home/user/photo.jpg; backup: /home/user/photo.jpg_original',
   );
 });

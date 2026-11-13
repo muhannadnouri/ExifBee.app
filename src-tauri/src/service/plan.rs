@@ -73,6 +73,10 @@ pub struct FilePlan {
     #[serde(skip)]
     #[cfg_attr(test, ts(skip))]
     pub identity: Option<FileIdentity>,
+    /// The file's tags as read while planning, for verifying untouched tags after the write.
+    #[serde(skip)]
+    #[cfg_attr(test, ts(skip))]
+    pub before: Vec<TagEntry>,
     /// The same arguments as a runnable POSIX command (shown and copied in S4-T07).
     #[serde(skip)]
     #[cfg_attr(test, ts(skip))]
@@ -151,6 +155,7 @@ fn plan_file(
         args: None,
         edits: Vec::new(),
         identity: None,
+        before: Vec::new(),
         command: None,
     };
     if input.changes.is_empty() {
@@ -279,6 +284,7 @@ fn plan_file(
         plan.args = Some(args);
         plan.edits = ordered;
         plan.identity = Some(recorded);
+        plan.before = file.tags;
     } else {
         plan.backup = None;
     }

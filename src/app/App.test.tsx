@@ -742,6 +742,8 @@ describe('applying a reviewed plan', () => {
           message: null,
           backup: '/a.jpg_original',
           warnings: [],
+          details: [],
+          exitCode: 0,
         },
       ],
     });
@@ -759,7 +761,7 @@ describe('applying a reviewed plan', () => {
     );
     await user.click(screen.getByRole('button', { name: /Log/ }));
     expect(screen.getByRole('log').textContent).toContain(
-      'Changed /a.jpg; backup: /a.jpg_original',
+      'Changed and verified /a.jpg; backup: /a.jpg_original',
     );
   });
 });

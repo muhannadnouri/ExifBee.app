@@ -13,4 +13,12 @@ backup: string | null,
 /**
  * ExifTool's warnings for this file.
  */
-warnings: Array<string>, };
+warnings: Array<string>, 
+/**
+ * For a mismatch, each difference; for a verified change, values stored in another form.
+ */
+details: Array<string>, 
+/**
+ * ExifTool's exit status, when it ran.
+ */
+exitCode: number | null, };

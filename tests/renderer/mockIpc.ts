@@ -130,6 +130,8 @@ export async function mockIpc(page: Page, reads: MockRead[] = SAMPLE_READS) {
               message: locked ? 'You do not have permission to change this file.' : null,
               backup: locked ? null : `${read.sourceFile}_original`,
               warnings: [],
+              details: [],
+              exitCode: locked ? null : 0,
             } as const;
           }),
         }),

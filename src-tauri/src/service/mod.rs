@@ -6,3 +6,4 @@ pub mod plan;
 pub mod reads;
 pub mod scan;
 pub mod settings;
+pub mod verify;

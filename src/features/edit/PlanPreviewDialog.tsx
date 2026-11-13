@@ -30,7 +30,8 @@ type State =
   | { phase: 'failed'; message: string };
 
 const OUTCOME: Record<Outcome, string> = {
-  changed: 'Changed',
+  changed: 'Changed and verified',
+  mismatch: 'Written, but it does not read back as planned',
   unchanged: 'No change made',
   failed: 'Failed, the file is as it was',
   skipped: 'Skipped, the file is as it was',
@@ -191,6 +192,7 @@ export function PlanPreviewDialog({ files, onApplied, onClose }: Props) {
             <p role="status">
               {[
                 `${count('changed')} changed`,
+                count('mismatch') > 0 && `${count('mismatch')} not as planned`,
                 count('unchanged') > 0 && `${count('unchanged')} unchanged`,
                 count('failed') > 0 && `${count('failed')} failed`,
                 count('skipped') > 0 && `${count('skipped')} skipped`,
@@ -206,12 +208,22 @@ export function PlanPreviewDialog({ files, onApplied, onClose }: Props) {
                   <strong>{OUTCOME[file.outcome]}</strong>
                   {file.message && `: ${file.message}`}
                 </p>
+                {file.details.length > 0 && (
+                  <ul className={file.outcome === 'mismatch' ? 'plan-differences' : 'muted'}>
+                    {file.details.map((detail) => (
+                      <li key={detail}>{detail}</li>
+                    ))}
+                  </ul>
+                )}
                 {file.backup && <p className="muted">Backup of the original: {file.backup}</p>}
                 {file.warnings.map((warning) => (
                   <p key={warning} className="muted">
                     ExifTool warning: {warning}
                   </p>
                 ))}
+                {file.outcome === 'failed' && file.exitCode !== null && (
+                  <p className="muted">ExifTool exit status {file.exitCode}</p>
+                )}
               </section>
             ))}
           </>
