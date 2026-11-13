@@ -9,6 +9,8 @@ import type { ImportResult } from './bindings/ImportResult';
 import type { ReadUpdate } from './bindings/ReadUpdate';
 import type { ScanOptions } from './bindings/ScanOptions';
 import type { TagPage } from './bindings/TagPage';
+import type { ApplyResult } from './bindings/ApplyResult';
+import type { BackupPolicy } from './bindings/BackupPolicy';
 import type { PlanPreview } from './bindings/PlanPreview';
 import type { RemovalPreview } from './bindings/RemovalPreview';
 import type { StagedFile } from './bindings/StagedFile';
@@ -24,7 +26,17 @@ export type {
   ScanOptions,
   ScanUpdate,
 };
-export type { PlanPreview, ReadUpdate, RemovalPreview, StagedFile, TagPage };
+export type {
+  ApplyResult,
+  BackupPolicy,
+  PlanPreview,
+  ReadUpdate,
+  RemovalPreview,
+  StagedFile,
+  TagPage,
+};
+export type { FileOutcome } from './bindings/FileOutcome';
+export type { Outcome } from './bindings/Outcome';
 export type { FilePlan } from './bindings/FilePlan';
 export type { PlannedChange } from './bindings/PlannedChange';
 export type { DeleteGroup } from './bindings/DeleteGroup';
@@ -67,6 +79,7 @@ export type Commands = {
   preview_removal: RemovalPreview;
   cancel_removal_preview: boolean;
   plan_changes: PlanPreview;
+  apply_plan: ApplyResult;
 };
 
 /** Runtime list of `Commands` keys; the `Record` type keeps it complete. */
@@ -87,6 +100,7 @@ export const COMMAND_NAMES = Object.keys({
   preview_removal: true,
   cancel_removal_preview: true,
   plan_changes: true,
+  apply_plan: true,
 } satisfies Record<keyof Commands, true>) as (keyof Commands)[];
 
 /** The only `invoke` call in the app (lint-enforced); rejections always become an `AppError`. */
@@ -126,6 +140,9 @@ export const previewRemoval = (id: string, group: string) => call('preview_remov
 export const cancelRemovalPreview = () => call('cancel_removal_preview');
 /** Re-checks every staged file and change in Rust and says what applying them would do; writes nothing. */
 export const planChanges = (files: StagedFile[]) => call('plan_changes', { files });
+/** Runs the reviewed plan `planId` once; only the backup policy comes from the renderer. */
+export const applyPlan = (planId: number, policy: BackupPolicy) =>
+  call('apply_plan', { planId, policy });
 
 /** Calls `handler` with every folder scan update (new files, problems, running totals, end state). */
 export const onScanProgress = (handler: (update: ScanUpdate) => void) =>

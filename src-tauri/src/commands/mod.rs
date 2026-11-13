@@ -8,6 +8,7 @@ use crate::adapter::exiftool::resolver::ExifTool;
 use crate::domain::edit::{DeleteGroup, StagedFile};
 use crate::domain::error::{AppError, ErrorKind};
 use crate::platform::can_write;
+use crate::service::apply::{self, ApplyResult, BackupPolicy};
 use crate::service::capabilities::{CapabilityCache, TagPage};
 use crate::service::dependency::{self, ExifToolStatus};
 use crate::service::files::{
@@ -31,6 +32,8 @@ pub type ReadsState = Mutex<ReadQueue>;
 pub type CapabilitiesState = CapabilityCache;
 /// The stop switch of the dry run in progress (a removal preview or a plan), one at a time.
 pub type PreviewState = Mutex<Option<CancelToken>>;
+/// The last plan shown for review, the only one `apply_plan` can run (S4-T04).
+pub type PlansState = Mutex<Option<PlanPreview>>;
 
 /// Folder scans of this session: the options every new scan uses (set from the UI, also used for
 /// dropped folders) and a stop switch per running scan.
@@ -647,13 +650,38 @@ pub async fn plan_changes(app: AppHandle, files: Vec<StagedFile>) -> Result<Plan
             .snapshot(&tool, &CancelToken::default())
             .ok();
         let work_dir = app.path().app_cache_dir().map_err(internal)?;
-        Ok(build_plan(
-            &tool,
-            snapshot.as_deref(),
-            inputs,
-            &work_dir,
-            &cancel,
-        )?)
+        let mut plan = build_plan(&tool, snapshot.as_deref(), inputs, &work_dir, &cancel)?;
+        static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+        plan.plan_id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        *app.state::<PlansState>().lock().map_err(internal)? = Some(plan.clone());
+        Ok(plan)
+    })
+    .await
+}
+
+/// Runs the plan the user reviewed and approved (S4-T04): only the plan stored under
+/// `plan_id`, only once, with arguments built in Rust. A stale or unknown ID (a newer review,
+/// or one already applied) runs nothing. `policy` is the one choice the renderer makes.
+#[tauri::command]
+pub async fn apply_plan(
+    app: AppHandle,
+    plan_id: u32,
+    policy: BackupPolicy,
+) -> Result<ApplyResult, AppError> {
+    let plan = {
+        let state = app.state::<PlansState>();
+        let mut stored = state.lock().map_err(internal)?;
+        apply::take_approved(&mut stored, plan_id)
+    }
+    .ok_or_else(|| {
+        AppError::new(
+            ErrorKind::InvalidInput,
+            "These changes were not the latest reviewed, or were already applied; review them again.",
+        )
+    })?;
+    blocking(move || {
+        let tool = current_tool(&app)?;
+        Ok(apply::apply_plan(&tool, &plan, policy))
     })
     .await
 }

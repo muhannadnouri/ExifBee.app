@@ -23,6 +23,7 @@ pub fn run() {
             app.manage::<commands::ScansState>(Mutex::default());
             app.manage::<commands::ReadsState>(Mutex::default());
             app.manage::<commands::PreviewState>(Mutex::default());
+            app.manage::<commands::PlansState>(Mutex::default());
             app.manage::<commands::CapabilitiesState>(CapabilityCache::new(
                 &app.path().app_cache_dir()?,
             ));
@@ -53,6 +54,7 @@ pub fn run() {
             commands::preview_removal,
             commands::cancel_removal_preview,
             commands::plan_changes,
+            commands::apply_plan,
         ])
         .run(tauri::generate_context!())
         .expect("error while running ExifBee");

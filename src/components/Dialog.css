@@ -38,3 +38,8 @@
 .dialog-actions-start {
   margin-inline-end: auto;
 }
+
+/* Paths and tag lists can be one long word; wrap them instead of scrolling sideways. */
+.dialog-body {
+  overflow-wrap: anywhere;
+}

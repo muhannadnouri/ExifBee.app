@@ -28,6 +28,7 @@ const ipc = vi.hoisted(() => ({
   previewRemoval: vi.fn(),
   cancelRemovalPreview: vi.fn(),
   planChanges: vi.fn(),
+  applyPlan: vi.fn(),
   scanPickedFolder: vi.fn(),
   cancelScan: vi.fn(),
   appInfo: vi.fn(),
@@ -682,9 +683,9 @@ describe('staging tag edits', () => {
       },
     ]);
     await user.click(
-      within(screen.getByRole('dialog', { name: 'Review changes' })).getAllByRole('button', {
-        name: 'Close',
-      })[1] as HTMLElement,
+      within(screen.getByRole('dialog', { name: 'Review changes' })).getByRole('button', {
+        name: 'Cancel',
+      }),
     );
 
     // Discarding several changes cannot be undone, so it asks; keeping is the safe default.
@@ -696,6 +697,70 @@ describe('staging tag edits', () => {
     await user.click(screen.getByRole('button', { name: 'Discard all' }));
     await user.click(screen.getByRole('button', { name: 'Discard 2 changes' }));
     expect(screen.getByText(/No staged changes/)).toBeTruthy();
+  });
+});
+
+// @req FR-011, FR-014
+describe('applying a reviewed plan', () => {
+  it('clears what was written, reads the file again and logs each outcome', async () => {
+    const user = userEvent.setup();
+    ipc.rawTextIsUtf8.mockResolvedValue(true);
+    addFiles.mockResolvedValueOnce(imported(['/a.jpg']));
+    const tags = (make: string) =>
+      tagsOf({ 'IFD0:Make': make }, { 'IFD0:Make': ['EXIF', 'writable'] });
+    answerReads([file('/a.jpg', { tags: tags('Canon') })]);
+    render(<App />);
+    await addViaMenu(user, 'Files…');
+    const metadata = within(screen.getByRole('region', { name: 'Metadata' }));
+    await user.click(await metadata.findByRole('button', { name: 'Edit IFD0:Make' }));
+    const box = await screen.findByRole('textbox', { name: 'New value' });
+    await user.clear(box);
+    await user.type(box, 'Nikon');
+    await user.click(screen.getByRole('button', { name: 'Stage change' }));
+
+    ipc.planChanges.mockResolvedValue({
+      planId: 3,
+      files: [
+        {
+          id: '/a.jpg',
+          name: 'a.jpg',
+          target: '/a.jpg',
+          link: null,
+          problems: [],
+          warnings: [],
+          backup: '/a.jpg_original',
+          changes: [{ target: 'IFD0:Make', before: 'Canon', after: 'Nikon', removes: [] }],
+        },
+      ],
+    });
+    ipc.applyPlan.mockResolvedValue({
+      files: [
+        {
+          id: '/a.jpg',
+          name: 'a.jpg',
+          outcome: 'changed',
+          message: null,
+          backup: '/a.jpg_original',
+          warnings: [],
+        },
+      ],
+    });
+    // After the write, the file reads with its new value.
+    answerReads([file('/a.jpg', { tags: tags('Nikon') })]);
+    await user.click(screen.getByRole('button', { name: /Actions \(1 staged\)/ }));
+    await user.click(screen.getByRole('button', { name: 'Review changes…' }));
+    await user.click(await screen.findByRole('button', { name: 'Apply to 1 file' }));
+    expect(ipc.applyPlan).toHaveBeenCalledWith(3, 'keepBackups');
+
+    expect(await screen.findByText(/No staged changes/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Actions/ }).textContent).not.toContain('staged');
+    await vi.waitFor(() =>
+      expect(metadata.getByRole('row', { name: /IFD0:Make/ }).textContent).toContain('Nikon'),
+    );
+    await user.click(screen.getByRole('button', { name: /Log/ }));
+    expect(screen.getByRole('log').textContent).toContain(
+      'Changed /a.jpg; backup: /a.jpg_original',
+    );
   });
 });
 

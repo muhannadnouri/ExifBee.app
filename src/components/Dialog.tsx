@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
-import { Button } from './atoms/Button';
+import { IconButton } from './atoms/IconButton';
 import './Dialog.css';
 
 type Props = { id: string; title: string; open: boolean; onClose: () => void; children: ReactNode };
@@ -51,14 +51,16 @@ export function Dialog({ id, title, open, onClose, children }: Props) {
       onKeyDown={wrapTab}
       className="dialog"
       aria-labelledby={`${id}-title`}
-      onClose={() => {
+      onClose={(event) => {
+        // React passes a nested dialog's close up the component tree; only our own counts.
+        if (event.target !== event.currentTarget) return;
         onClose();
         if (opener.current instanceof HTMLElement) opener.current.focus();
       }}
     >
       <header className="dialog-header">
         <h2 id={`${id}-title`}>{title}</h2>
-        <Button onClick={() => dialog.current?.close()}>Close</Button>
+        <IconButton icon="remove" label="Close" onClick={() => dialog.current?.close()} />
       </header>
       <div className="dialog-body">{children}</div>
     </dialog>

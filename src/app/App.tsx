@@ -49,6 +49,7 @@ import type {
   ScanUpdate,
   TagEntry,
   StagedFile,
+  ApplyResult,
 } from '../lib/ipc';
 import './App.css';
 
@@ -493,6 +494,36 @@ export function App() {
     setStatus(`Staged ${changeLabel(edit)} for ${entry.name}; it is not written yet`);
   };
 
+  /** After a write: done files leave the staged list and are read again (new values, new identity). */
+  const applied = (result: ApplyResult) => {
+    const done = new Set(
+      result.files
+        .filter(({ outcome }) => outcome === 'changed' || outcome === 'unchanged')
+        .map(({ id }) => id),
+    );
+    setStaged((current) => current.filter((item) => !done.has(item.fileId)));
+    const changed = result.files.filter(({ outcome }) => outcome === 'changed').map(({ id }) => id);
+    setReads((current) =>
+      Object.fromEntries(Object.entries(current).filter(([id]) => !changed.includes(id))),
+    );
+    if (selected && changed.includes(selected))
+      void readFile(selected)
+        .then((read) => setReads((current) => ({ ...current, [selected]: read })))
+        .catch((error: unknown) =>
+          setFailures((current) => ({ ...current, [selected]: toAppError(error) })),
+        );
+    for (const file of result.files) {
+      const path = files.find(({ id }) => id === file.id)?.path ?? file.name;
+      const note = file.message ? `: ${file.message}` : '';
+      if (file.outcome === 'changed')
+        addLog('info', `Changed ${path}${file.backup ? `; backup: ${file.backup}` : note}`);
+      else if (file.outcome === 'unchanged') addLog('info', `No change made to ${path}`);
+      else addLog(file.outcome === 'failed' ? 'error' : 'warning', `Not changed: ${path}${note}`);
+      for (const warning of file.warnings) addLog('warning', `${path}: ${warning}`);
+    }
+    setStatus(`Applied changes: ${changed.length} of ${result.files.length} files changed`);
+  };
+
   const drawerOpen = layout.actionsOpen || layout.logOpen;
   const file = selected ? (reads[selected] ?? null) : null;
   const failure = selected ? (failures[selected] ?? null) : null;
@@ -721,7 +752,13 @@ export function App() {
           onClose={() => setEditing(undefined)}
         />
       )}
-      {reviewing && <PlanPreviewDialog files={reviewing} onClose={() => setReviewing(undefined)} />}
+      {reviewing && (
+        <PlanPreviewDialog
+          files={reviewing}
+          onApplied={applied}
+          onClose={() => setReviewing(undefined)}
+        />
+      )}
       {removing && selected && file && (
         <RemoveGroupDialog
           fileId={selected}

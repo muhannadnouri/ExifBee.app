@@ -119,9 +119,24 @@ export async function mockIpc(page: Page, reads: MockRead[] = SAMPLE_READS) {
           messages: [],
         }),
         cancel_removal_preview: () => false,
+        // Ready files change, a *locked* file is skipped (what the real executor reports).
+        apply_plan: () => ({
+          files: [...registered].map(([id, read]) => {
+            const locked = read.sourceFile.includes('locked');
+            return {
+              id,
+              name: read.sourceFile.split('/').pop() ?? id,
+              outcome: locked ? 'skipped' : 'changed',
+              message: locked ? 'You do not have permission to change this file.' : null,
+              backup: locked ? null : `${read.sourceFile}_original`,
+              warnings: [],
+            } as const;
+          }),
+        }),
         // The real checks are proven against ExifTool (plan.rs); here, a plan from the mock's
         // own tags, and a file named *locked* is skipped the way a 0444 file would be.
         plan_changes: ({ files }) => ({
+          planId: 1,
           files: (files as StagedFile[]).map((staged) => {
             const read = registered.get(staged.id);
             const tags = (read?.tags ?? []) as Commands['read_file']['tags'];

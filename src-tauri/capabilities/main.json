@@ -20,6 +20,7 @@
     "allow-preview-removal",
     "allow-cancel-removal-preview",
     "allow-plan-changes",
+    "allow-apply-plan",
     "core:event:allow-listen",
     "core:event:allow-unlisten"
   ]

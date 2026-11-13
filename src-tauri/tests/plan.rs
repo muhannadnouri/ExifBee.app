@@ -1,15 +1,17 @@
-//! The plan builder (S4-T03, FR-010, SEC-004, SEC-006) with the real ExifTool: a ready plan's
-//! arguments produce exactly the planned result, building a plan writes nothing, and files that
-//! changed, moved, cannot be written or would be written unsafely are skipped with reasons.
+//! The plan builder (S4-T03, FR-010, SEC-004, SEC-006) and executor (S4-T04, FR-011, FR-014,
+//! SEC-005) with the real ExifTool: a ready plan's arguments produce exactly the planned result,
+//! building a plan writes nothing, files that changed, moved, cannot be written or would be
+//! written unsafely are skipped with reasons, and applying keeps backups unless told not to.
 
 mod common;
 
 use common::harness::{expect_absent, golden_dir, sha256, value, Engine, Workspace};
 use exifbee_lib::adapter::exiftool::process::CancelToken;
 use exifbee_lib::domain::edit::{Change, DeleteGroup, DeleteTag, EditValue, SetTag};
+use exifbee_lib::service::apply::{apply_plan, BackupPolicy, Outcome};
 use exifbee_lib::service::capabilities::{CapabilityCache, CapabilitySnapshot};
 use exifbee_lib::service::files::FileIdentity;
-use exifbee_lib::service::plan::{build_plan, FilePlan, PlanInput};
+use exifbee_lib::service::plan::{build_plan, write_args, FilePlan, PlanInput, PlanPreview};
 use serde_json::json;
 use std::fs;
 use std::os::unix::fs::{symlink, PermissionsExt};
@@ -346,4 +348,154 @@ fn changes_that_no_longer_fit_the_file_skip_it_with_every_reason() {
     );
     ws.expect_unchanged(&photo);
     ws.expect_unchanged(&zip);
+}
+
+/// One stored plan of one or more files, as `plan_changes` would keep it.
+fn preview(planner: &Planner, files: Vec<(&Path, Vec<Change>)>) -> PlanPreview {
+    let inputs = files
+        .into_iter()
+        .enumerate()
+        .map(|(index, (path, changes))| PlanInput {
+            id: format!("f{index}"),
+            chosen: path.to_path_buf(),
+            recorded: Some(FileIdentity::of(path).unwrap()),
+            changes,
+        })
+        .collect();
+    build_plan(
+        &planner.engine.tool,
+        Some(&planner.snapshot),
+        inputs,
+        planner.cache.path(),
+        &CancelToken::default(),
+    )
+    .unwrap()
+}
+
+// @req FR-011, FR-014, SEC-005
+#[test]
+fn jpg_set_and_read_back_rights_with_original_backup() {
+    let planner = Planner::new();
+    let mut ws = Workspace::new("apply-default");
+    let photo = ws.copy("metadata.jpg");
+    let plan = preview(
+        &planner,
+        vec![(
+            &photo,
+            vec![
+                set("XMP-dc", "Rights", "Example rights"),
+                delete_tag("IFD0", "Artist"),
+            ],
+        )],
+    );
+    let result = apply_plan(&planner.engine.tool, &plan, BackupPolicy::KeepBackups);
+    let outcome = &result.files[0];
+    assert_eq!(outcome.outcome, Outcome::Changed, "{:?}", outcome.message);
+    let backup = format!("{}_original", photo.display());
+    assert_eq!(outcome.backup.as_deref(), Some(backup.as_str()));
+    // The backup is the original, byte for byte; the file holds the planned values.
+    assert_eq!(
+        sha256(Path::new(&backup)),
+        sha256(&golden_dir().join("metadata.jpg"))
+    );
+    let read = planner.engine.read(&photo);
+    assert_eq!(value(&read, "XMP-dc:Rights"), json!("Example rights"));
+    expect_absent(&read, "IFD0:Artist");
+}
+
+// @req SEC-005, FR-014
+#[test]
+fn originals_are_overwritten_only_by_the_explicit_policy() {
+    let planner = Planner::new();
+    let mut ws = Workspace::new("apply-overwrite");
+    let photo = ws.copy("metadata.jpg");
+    // A value spelled like the option stays a value: the default arguments never overwrite.
+    let changes = vec![set("IFD0", "Software", "-overwrite_original")];
+    let default = write_args(&changes, &photo, false).unwrap();
+    assert!(default
+        .as_slice()
+        .iter()
+        .all(|arg| arg != "-overwrite_original"));
+    let explicit = write_args(&changes, &photo, true).unwrap();
+    assert_eq!(explicit.as_slice()[0], "-overwrite_original");
+
+    let plan = preview(&planner, vec![(&photo, changes)]);
+    let result = apply_plan(
+        &planner.engine.tool,
+        &plan,
+        BackupPolicy::OverwriteOriginals,
+    );
+    let outcome = &result.files[0];
+    assert_eq!(outcome.outcome, Outcome::Changed, "{:?}", outcome.message);
+    assert_eq!(outcome.backup, None);
+    assert!(!ws.path().join("metadata.jpg_original").exists());
+    assert_eq!(
+        value(&planner.engine.read(&photo), "IFD0:Software"),
+        json!("-overwrite_original")
+    );
+}
+
+// @req SEC-006, FR-011, FR-017
+#[test]
+fn files_changed_after_review_or_refused_are_left_as_they_are() {
+    let planner = Planner::new();
+    let mut ws = Workspace::new("apply-mixed");
+    let good = ws.copy_as("metadata.jpg", "good.jpg");
+    let changed = ws.copy_as("metadata.jpg", "changed.jpg");
+    let refused = ws.copy_as("metadata.jpg", "refused.jpg");
+    let zip = ws.copy("archive.zip");
+    let plan = preview(
+        &planner,
+        vec![
+            (&good, vec![set("IFD0", "Make", "Nikon")]),
+            (&changed, vec![set("IFD0", "Make", "Nikon")]),
+            // ExifTool rejects a value it cannot convert when writing.
+            (
+                &refused,
+                vec![set("ExifIFD", "ExposureTime", "not a number")],
+            ),
+            (&zip, vec![set("XMP-dc", "Title", "x")]),
+        ],
+    );
+    // Changed by something else between review and apply.
+    let other = fs::read(golden_dir().join("no-metadata.jpg")).unwrap();
+    fs::write(&changed, &other).unwrap();
+
+    let result = apply_plan(&planner.engine.tool, &plan, BackupPolicy::KeepBackups);
+    let outcomes: Vec<Outcome> = result.files.iter().map(|file| file.outcome).collect();
+    assert_eq!(
+        outcomes,
+        [
+            Outcome::Changed,
+            Outcome::Skipped,
+            Outcome::Failed,
+            Outcome::Skipped
+        ],
+        "{result:#?}"
+    );
+    assert!(result.files[1]
+        .message
+        .as_deref()
+        .unwrap()
+        .contains("changed after the changes were reviewed"));
+    assert!(result.files[3]
+        .message
+        .as_deref()
+        .unwrap()
+        .contains("not writable"));
+    // Only the good file changed; the others are exactly as they were, with no backups.
+    assert_eq!(fs::read(&changed).unwrap(), other);
+    ws.expect_unchanged(&refused);
+    ws.expect_unchanged(&zip);
+    for name in [
+        "changed.jpg_original",
+        "refused.jpg_original",
+        "archive.zip_original",
+    ] {
+        assert!(!ws.path().join(name).exists(), "{name}");
+    }
+    assert_eq!(
+        value(&planner.engine.read(&good), "IFD0:Make"),
+        json!("Nikon")
+    );
 }

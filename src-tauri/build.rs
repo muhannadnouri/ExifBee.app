@@ -22,6 +22,7 @@ const COMMANDS: &[&str] = &[
     "preview_removal",
     "cancel_removal_preview",
     "plan_changes",
+    "apply_plan",
 ];
 
 fn main() {

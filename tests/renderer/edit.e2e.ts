@@ -167,9 +167,53 @@ test('reviews staged changes as a plan per file, with skipped files explained', 
   await expect(review.getByRole('region', { name: 'Plan for locked.jpg' })).toContainText(
     'Skipped, nothing will change in this file',
   );
-  await expect(review).toContainText('Nothing has been written.');
   expect(await violations(page)).toEqual([]);
   await page.keyboard.press('Escape');
   await expect(review).toBeHidden();
   await expect(page.getByRole('button', { name: 'Review changes…' })).toBeFocused();
+});
+
+// @req FR-011, FR-014, SEC-004, SEC-005, UX-004
+test('applies a reviewed plan, with backups unless overwriting is confirmed', async ({ page }) => {
+  await mockIpc(page, [PHOTO, { ...PHOTO, sourceFile: '/home/user/locked.jpg' }]);
+  await page.goto('/');
+  await addVia(page, 'Files…');
+  const metadata = page.getByRole('region', { name: 'Metadata' });
+  const editor = page.getByRole('dialog', { name: 'Edit tag' });
+  await metadata.getByRole('button', { name: 'Edit IFD0:Make' }).click();
+  await editor.getByRole('textbox', { name: 'New value' }).fill('Nikon');
+  await editor.getByRole('button', { name: 'Stage change' }).click();
+  await addVia(page, 'Files…');
+  await page.getByRole('option', { name: /locked.jpg/ }).click();
+  await metadata.getByRole('button', { name: 'Edit IFD0:Make' }).click();
+  await editor.getByRole('button', { name: 'Delete tag' }).click();
+  await page.getByRole('button', { name: /Actions \(2 staged\)/ }).click();
+  await page.getByRole('button', { name: 'Review changes…' }).click();
+  const review = page.getByRole('dialog', { name: 'Review changes' });
+
+  // Unticking backups needs a confirmation whose safe answer has focus.
+  await review.getByRole('checkbox', { name: /Keep a backup/ }).uncheck();
+  await review.getByRole('button', { name: 'Apply without backups…' }).click();
+  const confirm = page.getByRole('dialog', { name: 'Apply without backups?' });
+  await expect(confirm.getByRole('button', { name: 'Keep backups' })).toBeFocused();
+  expect(await violations(page)).toEqual([]);
+  await page.keyboard.press('Enter');
+  await expect(review.getByRole('checkbox', { name: /Keep a backup/ })).toBeChecked();
+
+  await review.getByRole('button', { name: 'Apply to 1 file' }).click();
+  await expect(review.getByText(/changed,/)).toHaveText('1 changed, 1 skipped.');
+  await expect(review.getByRole('region', { name: 'Result for photo.jpg' })).toContainText(
+    'Backup of the original: /home/user/photo.jpg_original',
+  );
+  expect(await violations(page)).toEqual([]);
+  await review.getByRole('button', { name: 'Done' }).click();
+
+  // The written file left the staged list; the skipped one stays to be fixed or undone.
+  const staged = page.getByRole('region', { name: /Staged for/ });
+  await expect(staged).toHaveCount(1);
+  await expect(staged).toHaveAccessibleName('Staged for locked.jpg');
+  await page.getByRole('button', { name: 'Log' }).click();
+  await expect(page.getByRole('log')).toContainText(
+    'Changed /home/user/photo.jpg; backup: /home/user/photo.jpg_original',
+  );
 });

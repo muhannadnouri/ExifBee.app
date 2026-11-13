@@ -33,3 +33,20 @@
   margin: 0;
   padding-inline-start: 1.1rem;
 }
+
+.plan-outcome-failed strong {
+  color: var(--danger);
+}
+
+.plan-confirm {
+  margin: 0;
+}
+
+.plan-removes summary {
+  cursor: pointer;
+}
+
+.plan-removes p {
+  max-height: 12rem;
+  overflow: auto;
+}

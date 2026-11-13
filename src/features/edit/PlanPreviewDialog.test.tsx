@@ -1,10 +1,15 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FilePlan, StagedFile } from '../../lib/ipc';
 import { PlanPreviewDialog } from './PlanPreviewDialog';
 
-const ipc = vi.hoisted(() => ({ planChanges: vi.fn(), cancelRemovalPreview: vi.fn() }));
+const ipc = vi.hoisted(() => ({
+  planChanges: vi.fn(),
+  applyPlan: vi.fn(),
+  cancelRemovalPreview: vi.fn(),
+}));
 vi.mock('../../lib/ipc', () => ipc);
 
 HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) {
@@ -21,6 +26,7 @@ const staged: StagedFile[] = [
     changes: [{ kind: 'set', group: 'IFD0', name: 'Make', value: { kind: 'text', text: 'Nikon' } }],
   },
 ];
+const noop = () => undefined;
 const ready: FilePlan = {
   id: 'f1',
   name: 'link.jpg',
@@ -33,7 +39,12 @@ const ready: FilePlan = {
     { target: 'IFD0:Make', before: 'Canon', after: 'Nikon', removes: [] },
     { target: 'IFD0:Artist', before: 'Ann', after: null, removes: [] },
     { target: 'XMP-dc:Creator', before: null, after: 'Bo', removes: [] },
-    { target: 'XMP-dc group', before: null, after: null, removes: ['XMP-dc:Title'] },
+    {
+      target: 'XMP-dc group',
+      before: null,
+      after: null,
+      removes: ['XMP-dc:Title', 'Google:ImageData', 'Google:ImageData'],
+    },
   ],
 };
 const skipped: FilePlan = {
@@ -49,6 +60,7 @@ const skipped: FilePlan = {
 
 beforeEach(() => {
   ipc.planChanges.mockReset();
+  ipc.applyPlan.mockReset();
   ipc.cancelRemovalPreview.mockReset().mockResolvedValue(true);
 });
 afterEach(cleanup);
@@ -56,8 +68,8 @@ afterEach(cleanup);
 // @req FR-010, SEC-004, SEC-006, FR-014
 describe('plan preview', () => {
   it('shows each file’s real target, readable diff, warnings and skipped reasons', async () => {
-    ipc.planChanges.mockResolvedValue({ files: [ready, { ...skipped }] });
-    render(<PlanPreviewDialog files={staged} onClose={() => undefined} />);
+    ipc.planChanges.mockResolvedValue({ planId: 4, files: [ready, { ...skipped }] });
+    render(<PlanPreviewDialog files={staged} onApplied={noop} onClose={noop} />);
     const dialog = within(screen.getByRole('dialog', { name: 'Review changes' }));
     expect(dialog.getByText(/Checking each file/)).toBeTruthy();
     expect(ipc.planChanges).toHaveBeenCalledWith(staged);
@@ -71,28 +83,24 @@ describe('plan preview', () => {
       'IFD0:Make Canon → Nikon',
       'IFD0:Artist Ann → (removed)',
       'XMP-dc:Creator (new) → Bo',
-      'XMP-dc group removes 1 tag: XMP-dc:Title',
+      // Long lists are folded, and repeated tags are counted instead of listed again.
+      'XMP-dc group removes 3 tagsShow the tagsXMP-dc:Title, Google:ImageData ×2',
     ]);
     expect(first.getByText(/backup from an earlier change already exists/)).toBeTruthy();
 
     const second = within(dialog.getByRole('region', { name: 'Plan for old.jpg' }));
     expect(second.getByText(/Skipped, nothing will change in this file/)).toBeTruthy();
     expect(second.getByText(/changed after it was read/)).toBeTruthy();
-    expect(
-      dialog.getByText('Nothing has been written. Applying changes is not available yet.'),
-    ).toBeTruthy();
-    // Applying is not offered before the executor and approval steps exist.
-    expect(dialog.getAllByRole('button').map((button) => button.textContent)).toEqual([
-      'Close',
-      'Close',
-    ]);
+    // Reviewing writes nothing: applying needs the explicit button.
+    expect(ipc.applyPlan).not.toHaveBeenCalled();
+    expect(dialog.getByRole('button', { name: 'Apply to 1 file' })).toBeTruthy();
   });
 
   it('names the backup ExifTool would create', async () => {
     ipc.planChanges.mockResolvedValue({
       files: [{ ...ready, link: null, warnings: [], backup: '/real/photo.jpg_original' }],
     });
-    render(<PlanPreviewDialog files={staged} onClose={() => undefined} />);
+    render(<PlanPreviewDialog files={staged} onApplied={noop} onClose={noop} />);
     expect(
       await screen.findByText('Backup of the original: /real/photo.jpg_original'),
     ).toBeTruthy();
@@ -100,13 +108,104 @@ describe('plan preview', () => {
 
   it('shows why a plan could not be made, and stops checking when closed early', async () => {
     ipc.planChanges.mockRejectedValueOnce({ kind: 'ScopeViolation', message: 'f9 is not a file' });
-    render(<PlanPreviewDialog files={staged} onClose={() => undefined} />);
+    render(<PlanPreviewDialog files={staged} onApplied={noop} onClose={noop} />);
     expect(await screen.findByText('f9 is not a file')).toBeTruthy();
     cleanup();
     expect(ipc.cancelRemovalPreview).not.toHaveBeenCalled();
 
     ipc.planChanges.mockReturnValue(new Promise(() => undefined));
-    render(<PlanPreviewDialog files={staged} onClose={() => undefined} />).unmount();
+    render(<PlanPreviewDialog files={staged} onApplied={noop} onClose={noop} />).unmount();
     expect(ipc.cancelRemovalPreview).toHaveBeenCalledOnce();
+  });
+});
+
+// @req FR-011, FR-014, SEC-004, SEC-005
+describe('apply', () => {
+  const result = {
+    files: [
+      {
+        id: 'f1',
+        name: 'link.jpg',
+        outcome: 'changed',
+        message: null,
+        backup: '/real/photo.jpg_original',
+        warnings: ['[minor] Fixed something'],
+      },
+      {
+        id: 'f2',
+        name: 'old.jpg',
+        outcome: 'skipped',
+        message: 'The file changed after it was read.',
+        backup: null,
+        warnings: [],
+      },
+    ],
+  };
+
+  it('applies the reviewed plan once with backups by default and reports each file', async () => {
+    const user = userEvent.setup();
+    const onApplied = vi.fn();
+    ipc.planChanges.mockResolvedValue({ planId: 4, files: [ready, skipped] });
+    ipc.applyPlan.mockResolvedValue(result);
+    render(<PlanPreviewDialog files={staged} onApplied={onApplied} onClose={noop} />);
+    const dialog = within(screen.getByRole('dialog', { name: 'Review changes' }));
+    const box = (await dialog.findByRole('checkbox', {
+      name: 'Keep a backup of each original (recommended)',
+    })) as HTMLInputElement;
+    expect(box.checked).toBe(true);
+    await user.click(dialog.getByRole('button', { name: 'Apply to 1 file' }));
+    expect(ipc.applyPlan).toHaveBeenCalledWith(4, 'keepBackups');
+    expect((await dialog.findByText(/changed, 1 skipped/)).textContent).toBe(
+      '1 changed, 1 skipped.',
+    );
+    expect(onApplied).toHaveBeenCalledWith(result);
+    const done = within(dialog.getByRole('region', { name: 'Result for link.jpg' }));
+    expect(done.getByText('Changed')).toBeTruthy();
+    expect(done.getByText('Backup of the original: /real/photo.jpg_original')).toBeTruthy();
+    expect(done.getByText('ExifTool warning: [minor] Fixed something')).toBeTruthy();
+    expect(dialog.getByRole('region', { name: 'Result for old.jpg' }).textContent).toContain(
+      'Skipped, the file is as it was: The file changed after it was read.',
+    );
+    expect(dialog.queryByRole('button', { name: /Apply/ })).toBeNull();
+  });
+
+  it('overwrites originals only after unticking backups and confirming', async () => {
+    const user = userEvent.setup();
+    ipc.planChanges.mockResolvedValue({ planId: 5, files: [ready] });
+    ipc.applyPlan.mockResolvedValue(result);
+    render(<PlanPreviewDialog files={staged} onApplied={noop} onClose={noop} />);
+    await user.click(await screen.findByRole('checkbox', { name: /Keep a backup/ }));
+    expect(screen.getByText(/they cannot be restored from a backup/)).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Apply without backups…' }));
+    const confirm = within(screen.getByRole('dialog', { name: 'Apply without backups?' }));
+    expect(document.activeElement?.textContent).toBe('Keep backups');
+    // The safe answer puts backups back and runs nothing.
+    await user.click(confirm.getByRole('button', { name: 'Keep backups' }));
+    expect(ipc.applyPlan).not.toHaveBeenCalled();
+    expect(
+      (screen.getByRole('checkbox', { name: /Keep a backup/ }) as HTMLInputElement).checked,
+    ).toBe(true);
+
+    await user.click(screen.getByRole('checkbox', { name: /Keep a backup/ }));
+    await user.click(screen.getByRole('button', { name: 'Apply without backups…' }));
+    await user.click(screen.getByRole('button', { name: 'Overwrite originals' }));
+    expect(ipc.applyPlan).toHaveBeenCalledWith(5, 'overwriteOriginals');
+  });
+
+  it('offers nothing to apply when every file is skipped, and shows a refused apply', async () => {
+    const user = userEvent.setup();
+    ipc.planChanges.mockResolvedValue({ planId: 6, files: [skipped] });
+    render(<PlanPreviewDialog files={staged} onApplied={noop} onClose={noop} />);
+    expect(await screen.findByText('Nothing can be applied.')).toBeTruthy();
+    expect((screen.getByRole('button', { name: /Apply/ }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    cleanup();
+
+    ipc.planChanges.mockResolvedValue({ planId: 7, files: [ready] });
+    ipc.applyPlan.mockRejectedValue({ kind: 'InvalidInput', message: 'review them again' });
+    render(<PlanPreviewDialog files={staged} onApplied={noop} onClose={noop} />);
+    await user.click(await screen.findByRole('button', { name: 'Apply to 1 file' }));
+    expect(await screen.findByText('review them again')).toBeTruthy();
   });
 });

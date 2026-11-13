@@ -2,7 +2,7 @@
 //! would run, after proving each file is still the one the user inspected and every change is
 //! still valid for it. Building a plan only reads; nothing here writes a file.
 
-use crate::adapter::exiftool::argv::Args;
+use crate::adapter::exiftool::argv::{Args, ArgsError};
 use crate::adapter::exiftool::display::{display, DisplayedCommand, Shell};
 use crate::adapter::exiftool::process::CancelToken;
 use crate::adapter::exiftool::read::{raw_is_utf8, read_metadata, FileMetadata, ReadError};
@@ -40,6 +40,8 @@ pub struct PlanInput {
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(test, derive(ts_rs::TS), ts(export))]
 pub struct PlanPreview {
+    /// Names this plan for `apply_plan`; set when the command stores it (S4-T04).
+    pub plan_id: u32,
     pub files: Vec<FilePlan>,
 }
 
@@ -59,10 +61,18 @@ pub struct FilePlan {
     pub changes: Vec<PlannedChange>,
     /// The backup ExifTool would create; `None` when skipped or when an older backup is kept.
     pub backup: Option<String>,
-    /// The exact arguments to run, `Some` only when ready (kept in Rust; S4-T04 runs them).
+    /// The exact arguments to run with ExifTool's default backup, `Some` only when ready.
     #[serde(skip)]
     #[cfg_attr(test, ts(skip))]
     pub args: Option<Args>,
+    /// The validated changes in run order, for the executor to rebuild `args` with its policy.
+    #[serde(skip)]
+    #[cfg_attr(test, ts(skip))]
+    pub edits: Vec<Change>,
+    /// The identity the plan was checked against; the executor checks it again (S4-T04).
+    #[serde(skip)]
+    #[cfg_attr(test, ts(skip))]
+    pub identity: Option<FileIdentity>,
     /// The same arguments as a runnable POSIX command (shown and copied in S4-T07).
     #[serde(skip)]
     #[cfg_attr(test, ts(skip))]
@@ -115,7 +125,7 @@ pub fn build_plan(
     for input in inputs {
         files.push(plan_file(tool, snapshot, input, work_dir, cancel)?);
     }
-    Ok(PlanPreview { files })
+    Ok(PlanPreview { plan_id: 0, files })
 }
 
 fn plan_file(
@@ -139,6 +149,8 @@ fn plan_file(
         changes: Vec::new(),
         backup: None,
         args: None,
+        edits: Vec::new(),
+        identity: None,
         command: None,
     };
     if input.changes.is_empty() {
@@ -214,7 +226,6 @@ fn plan_file(
         return Ok(plan);
     }
     let mut seen = HashSet::new();
-    let mut args = Args::new();
     // Removals first, then deleted tags, then values (see the order gotcha above).
     let mut ordered = input.changes;
     ordered.sort_by_key(|change| match change {
@@ -252,15 +263,6 @@ fn plan_file(
             }),
             Err(problem) => plan.problems.push(format!("{label}: {problem}")),
         }
-        let added = match change {
-            Change::Set(edit) => args.clone().set(edit),
-            Change::DeleteTag(delete) => args.clone().delete_tag(delete),
-            Change::DeleteGroup(delete) => args.clone().delete_group(delete),
-        };
-        match added {
-            Ok(next) => args = next,
-            Err(error) => plan.problems.push(format!("{label}: {error}")),
-        }
     }
     let deletes = ordered
         .iter()
@@ -271,19 +273,41 @@ fn plan_file(
         );
     }
     if plan.problems.is_empty() {
-        let args = args
-            .files([&target])
+        let args = write_args(&ordered, &target, false)
             .map_err(|error| ReadError::InvalidInput(error.to_string()))?;
         plan.command = Some(display(Shell::Posix, &tool.path, args.as_slice()));
         plan.args = Some(args);
+        plan.edits = ordered;
+        plan.identity = Some(recorded);
     } else {
         plan.backup = None;
     }
     Ok(plan)
 }
 
+/// The arguments for `changes` (already in run order) on `target`, the one place both the
+/// preview and the executor build them, so what was reviewed is what runs.
+///
+/// `overwrite` adds ExifTool's `-overwrite_original` (no `_original` backup); only the
+/// executor's explicit `OverwriteOriginals` policy sets it (S4-T04, SEC-005).
+pub fn write_args(changes: &[Change], target: &Path, overwrite: bool) -> Result<Args, ArgsError> {
+    let mut args = if overwrite {
+        Args::new().options(&["-overwrite_original"])
+    } else {
+        Args::new()
+    };
+    for change in changes {
+        args = match change {
+            Change::Set(edit) => args.set(edit)?,
+            Change::DeleteTag(delete) => args.delete_tag(delete)?,
+            Change::DeleteGroup(delete) => args.delete_group(delete)?,
+        };
+    }
+    args.files([target])
+}
+
 /// `/a/photo.jpg` + `_original` → `/a/photo.jpg_original`, ExifTool's naming.
-fn sibling(path: &Path, suffix: &str) -> PathBuf {
+pub fn sibling(path: &Path, suffix: &str) -> PathBuf {
     let mut name = OsString::from(path.as_os_str());
     name.push(suffix);
     PathBuf::from(name)

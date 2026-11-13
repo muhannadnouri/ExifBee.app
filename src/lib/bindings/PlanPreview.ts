@@ -4,4 +4,8 @@ import type { FilePlan } from "./FilePlan";
 /**
  * What applying the staged changes would do, file by file.
  */
-export type PlanPreview = { files: Array<FilePlan>, };
+export type PlanPreview = { 
+/**
+ * Names this plan for `apply_plan`; set when the command stores it (S4-T04).
+ */
+planId: number, files: Array<FilePlan>, };
