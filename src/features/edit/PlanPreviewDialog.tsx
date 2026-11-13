@@ -51,7 +51,26 @@ function ChangeLine({ change }: { change: PlannedChange }) {
   return (
     <li>
       <strong>{change.target}</strong>{' '}
-      {change.removes.length > 0 ? (
+      {change.copies.length > 0 ? (
+        <>
+          writes {plural(change.copies.length, 'tag')}
+          <details className="plan-removes">
+            <summary>Show the tags</summary>
+            <p className="muted" tabIndex={0}>
+              {change.copies.map(({ key, value }) => `${key} = ${value}`).join(', ')}
+            </p>
+          </details>
+          {change.cannotCopy.length > 0 && (
+            <p className="plan-cannot">
+              This file cannot hold {plural(change.cannotCopy.length, 'of the tags', 'of the tags')}
+              , so {change.cannotCopy.length === 1 ? 'it is' : 'they are'} not copied:{' '}
+              {[...counted(change.cannotCopy)]
+                .map(([key, count]) => (count > 1 ? `${key} ×${count}` : key))
+                .join(', ')}
+            </p>
+          )}
+        </>
+      ) : change.removes.length > 0 ? (
         <>
           removes {plural(change.removes.length, 'tag')}
           {/* All metadata can be hundreds of tags, many repeated: count repeats, fold the list. */}

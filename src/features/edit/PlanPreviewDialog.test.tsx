@@ -36,14 +36,30 @@ const ready: FilePlan = {
   warnings: ['A backup from an earlier change already exists (/real/photo.jpg_original).'],
   backup: null,
   changes: [
-    { target: 'IFD0:Make', before: 'Canon', after: 'Nikon', removes: [] },
-    { target: 'IFD0:Artist', before: 'Ann', after: null, removes: [] },
-    { target: 'XMP-dc:Creator', before: null, after: 'Bo', removes: [] },
+    {
+      target: 'IFD0:Make',
+      before: 'Canon',
+      after: 'Nikon',
+      removes: [],
+      copies: [],
+      cannotCopy: [],
+    },
+    { target: 'IFD0:Artist', before: 'Ann', after: null, removes: [], copies: [], cannotCopy: [] },
+    {
+      target: 'XMP-dc:Creator',
+      before: null,
+      after: 'Bo',
+      removes: [],
+      copies: [],
+      cannotCopy: [],
+    },
     {
       target: 'XMP-dc group',
       before: null,
       after: null,
       removes: ['XMP-dc:Title', 'Google:ImageData', 'Google:ImageData'],
+      copies: [],
+      cannotCopy: [],
     },
   ],
 };
@@ -94,6 +110,43 @@ describe('plan preview', () => {
     // Reviewing writes nothing: applying needs the explicit button.
     expect(ipc.applyPlan).not.toHaveBeenCalled();
     expect(dialog.getByRole('button', { name: 'Apply to 1 file' })).toBeTruthy();
+  });
+
+  // @req FR-013
+  it('shows what a copy writes and which tags the file cannot hold', async () => {
+    const user = userEvent.setup();
+    ipc.planChanges.mockResolvedValue({
+      planId: 2,
+      files: [
+        {
+          ...ready,
+          link: null,
+          warnings: [],
+          changes: [
+            {
+              target: 'Copy from photo.jpg: all metadata',
+              before: null,
+              after: null,
+              removes: [],
+              copies: [
+                { key: 'XMP-dc:Title', value: 'T' },
+                { key: 'XMP-dc:Subject', value: 'a, b' },
+              ],
+              cannotCopy: ['IFD0:Make', 'IFD0:Artist'],
+            },
+          ],
+        },
+      ],
+    });
+    render(<PlanPreviewDialog files={staged} onApplied={noop} onClose={noop} />);
+    const line = await screen.findByText('Copy from photo.jpg: all metadata');
+    const item = line.closest('li') as HTMLElement;
+    expect(item.textContent).toContain('writes 2 tags');
+    await user.click(within(item).getByText('Show the tags'));
+    expect(within(item).getByText('XMP-dc:Title = T, XMP-dc:Subject = a, b')).toBeTruthy();
+    expect(item.textContent).toContain(
+      'This file cannot hold 2 of the tags, so they are not copied: IFD0:Make, IFD0:Artist',
+    );
   });
 
   it('names the backup ExifTool would create', async () => {

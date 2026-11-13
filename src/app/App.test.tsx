@@ -729,7 +729,16 @@ describe('applying a reviewed plan', () => {
           problems: [],
           warnings: [],
           backup: '/a.jpg_original',
-          changes: [{ target: 'IFD0:Make', before: 'Canon', after: 'Nikon', removes: [] }],
+          changes: [
+            {
+              target: 'IFD0:Make',
+              before: 'Canon',
+              after: 'Nikon',
+              removes: [],
+              copies: [],
+              cannotCopy: [],
+            },
+          ],
         },
       ],
     });

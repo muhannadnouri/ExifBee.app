@@ -53,6 +53,7 @@ describe('metadata inspector', () => {
         reading={false}
         onEdit={noEdit}
         onRemove={noEdit}
+        onCopy={noEdit}
         staged={none}
       />,
     );
@@ -80,6 +81,7 @@ describe('metadata inspector', () => {
         reading={false}
         onEdit={noEdit}
         onRemove={noEdit}
+        onCopy={noEdit}
         staged={none}
       />,
     );
@@ -123,6 +125,7 @@ describe('metadata inspector', () => {
         reading={false}
         onEdit={noEdit}
         onRemove={noEdit}
+        onCopy={noEdit}
         staged={none}
       />,
     );
@@ -152,6 +155,7 @@ describe('metadata inspector', () => {
         reading={false}
         onEdit={noEdit}
         onRemove={noEdit}
+        onCopy={noEdit}
         staged={none}
       />,
     );
@@ -185,6 +189,7 @@ describe('metadata inspector', () => {
         reading={false}
         onEdit={noEdit}
         onRemove={noEdit}
+        onCopy={noEdit}
         staged={none}
       />,
     );
@@ -198,6 +203,7 @@ describe('metadata inspector', () => {
         reading={false}
         onEdit={noEdit}
         onRemove={noEdit}
+        onCopy={noEdit}
         staged={none}
       />,
     );
@@ -215,6 +221,7 @@ describe('metadata inspector', () => {
         reading={false}
         onEdit={noEdit}
         onRemove={noEdit}
+        onCopy={noEdit}
         staged={none}
       />,
     );

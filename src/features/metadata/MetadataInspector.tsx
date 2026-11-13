@@ -19,6 +19,8 @@ type Props = {
   onEdit: (tag: TagEntry | null) => void;
   /** Remove a group (`IFD0`, `XMP`) or `All` metadata; must be stable like `onEdit`. */
   onRemove: (group: string) => void;
+  /** Copy to other files: the rows shown now and the tree's group; must be stable too. */
+  onCopy: (shown: TagEntry[], group: string | undefined) => void;
   /** `Group:Tag` of this file's staged changes; must keep its identity between unrelated renders. */
   staged: Set<string>;
 };
@@ -63,6 +65,7 @@ export const MetadataInspector = memo(function MetadataInspector({
   reading,
   onEdit,
   onRemove,
+  onCopy,
   staged,
 }: Props) {
   const [text, setText] = useState('');
@@ -170,6 +173,7 @@ export const MetadataInspector = memo(function MetadataInspector({
         </Button>
         <div className="inspector-changes" role="group" aria-label="Change metadata">
           <Button onClick={() => onEdit(null)}>Add tag…</Button>
+          <Button onClick={() => onCopy(rows, removable)}>Copy to other files…</Button>
           <MenuButton
             align="end"
             items={[

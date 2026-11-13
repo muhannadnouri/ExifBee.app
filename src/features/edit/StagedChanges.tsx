@@ -1,30 +1,45 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '../../components/atoms/Button';
 import { Dialog } from '../../components/Dialog';
-import type { DeleteGroup, DeleteTag, SetTag } from '../../lib/ipc';
+import type { CopySelection, CopyTags, DeleteGroup, DeleteTag, SetTag } from '../../lib/ipc';
 import './StagedChanges.css';
 
-/** One staged change: a new value (S4-T01), a deleted tag or a removed group (S4-T02). */
+/** One staged change: a new value (S4-T01), a deleted tag or removed group (S4-T02), or a copy
+ * from another file (S4-T06; `sourceName` is for display only). */
 export type Change =
   | ({ kind: 'set' } & SetTag)
   | ({ kind: 'deleteTag' } & DeleteTag)
   /** `removed` is the `Group:Tag` of each tag the dry run found, for marking rows. */
-  | ({ kind: 'deleteGroup'; removed: string[] } & DeleteGroup);
+  | ({ kind: 'deleteGroup'; removed: string[] } & DeleteGroup)
+  | ({ kind: 'copyTags'; sourceName: string } & CopyTags);
 
 export type StagedEdit = { fileId: string; fileName: string; edit: Change; before: string | null };
 
-/** What a change is about, e.g. `IFD0:Make`, `XMP-dc group`, `All metadata`. */
+/** `all metadata`, `XMP-dc group`, `IFD0:Make`, `3 tags`. */
+export const copyWhat = (what: CopySelection) =>
+  what.kind === 'all'
+    ? 'all metadata'
+    : what.kind === 'group'
+      ? `${what.group} group`
+      : what.tags.length === 1
+        ? `${what.tags[0]?.group}:${what.tags[0]?.name}`
+        : `${what.tags.length} tags`;
+
+/** What a change is about, e.g. `IFD0:Make`, `XMP-dc group`, `All metadata`, a copy. */
 export const changeLabel = (edit: Change) =>
-  edit.kind !== 'deleteGroup'
-    ? `${edit.group}:${edit.name}`
-    : edit.group === 'All'
-      ? 'All metadata'
-      : `${edit.group} group`;
+  edit.kind === 'copyTags'
+    ? `Copy from ${edit.sourceName}: ${copyWhat(edit.what)}`
+    : edit.kind !== 'deleteGroup'
+      ? `${edit.group}:${edit.name}`
+      : edit.group === 'All'
+        ? 'All metadata'
+        : `${edit.group} group`;
 
 /** The key one staged change replaces: one change per file and tag, or per file and group. */
 export const stagedKey = (fileId: string, edit: Change) => `${fileId}\n${changeLabel(edit)}`;
 
 const shown = (edit: Change) => {
+  if (edit.kind === 'copyTags') return '';
   if (edit.kind === 'deleteTag') return '(removed)';
   if (edit.kind === 'deleteGroup')
     return `removes ${edit.removed.length} ${edit.removed.length === 1 ? 'tag' : 'tags'}`;
@@ -79,7 +94,8 @@ export function StagedChanges({ staged, onUndo, onDiscardAll, onReview }: Props)
                     {item.edit.kind === 'deleteGroup' && item.edit.group === 'All' && (
                       <span className="staged-high-impact">High impact </span>
                     )}
-                    {item.edit.kind === 'deleteGroup' ? null : item.before === null ? (
+                    {item.edit.kind === 'deleteGroup' ||
+                    item.edit.kind === 'copyTags' ? null : item.before === null ? (
                       <span className="muted">(new) </span>
                     ) : (
                       <span className="muted">

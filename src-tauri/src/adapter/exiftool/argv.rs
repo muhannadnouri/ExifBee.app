@@ -3,7 +3,9 @@
 //! line or interpreted by a shell, so spaces, quotes, `;`, `&`, `$`, backticks, newlines or a
 //! leading `-` in a file name are just bytes of that name.
 
-use crate::domain::edit::{valid_name, DeleteGroup, DeleteTag, EditValue, SetTag};
+use crate::domain::edit::{
+    valid_name, CopySelection, CopyTags, DeleteGroup, DeleteTag, EditValue, SetTag,
+};
 use std::ffi::OsString;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -123,6 +125,34 @@ impl Args {
             format!("-{}:All=", delete.group)
         };
         self.items.push(arg.into());
+        Ok(self)
+    }
+
+    /// Appends a copy from `source` (S4-T06): `-TagsFromFile <source>` then `-all:all`,
+    /// `-GROUP:all` or one `-GROUP:NAME` per tag (each name once).
+    ///
+    /// Gotcha: `source` must be absolute (it follows `-TagsFromFile`, where a leading `-` would
+    /// be misread); the selectors carry no `<` or `=`, so they only select, never redirect.
+    pub fn copy_from(mut self, source: &Path, copy: &CopyTags) -> Result<Self, ArgsError> {
+        if let Some(problem) = copy.problem() {
+            return Err(ArgsError::Edit(problem));
+        }
+        if !source.is_absolute() {
+            return Err(ArgsError::RelativeFile(source.to_path_buf()));
+        }
+        self.items.push("-TagsFromFile".into());
+        self.items.push(source.as_os_str().to_owned());
+        match &copy.what {
+            CopySelection::All => self.items.push("-all:all".into()),
+            CopySelection::Group { group } => self.items.push(format!("-{group}:all").into()),
+            CopySelection::Tags { tags } => {
+                let mut seen = std::collections::HashSet::new();
+                for tag in tags.iter().filter(|tag| seen.insert(*tag)) {
+                    self.items
+                        .push(format!("-{}:{}", tag.group, tag.name).into());
+                }
+            }
+        }
         Ok(self)
     }
 

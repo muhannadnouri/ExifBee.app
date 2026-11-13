@@ -5,7 +5,7 @@ use crate::adapter::exiftool::process::CancelToken;
 use crate::adapter::exiftool::read::{raw_is_utf8, read_metadata, FileMetadata};
 use crate::adapter::exiftool::removal::{preview_group_removal, RemovalPreview};
 use crate::adapter::exiftool::resolver::ExifTool;
-use crate::domain::edit::{DeleteGroup, StagedFile};
+use crate::domain::edit::{Change, DeleteGroup, StagedFile};
 use crate::domain::error::{AppError, ErrorKind};
 use crate::platform::can_write;
 use crate::service::apply::{self, ApplyResult, BackupPolicy};
@@ -613,10 +613,25 @@ pub async fn plan_changes(app: AppHandle, files: Vec<StagedFile>) -> Result<Plan
             "too many staged changes for one plan",
         ));
     }
-    let inputs = {
+    let (inputs, sources) = {
         let state = app.state::<FilesState>();
         let registry = state.lock().map_err(internal)?;
-        files
+        let scope = |id: &str| {
+            registry.path(id).map(PathBuf::from).ok_or_else(|| {
+                AppError::new(
+                    ErrorKind::ScopeViolation,
+                    format!("{id} is not a file added in this session"),
+                )
+            })
+        };
+        // Copy sources must be session files too; the plan resolves them by these paths.
+        let mut sources = HashMap::new();
+        for change in files.iter().flat_map(|file| &file.changes) {
+            if let Change::CopyTags(copy) = change {
+                sources.insert(copy.source.clone(), scope(&copy.source)?);
+            }
+        }
+        let inputs = files
             .into_iter()
             .map(|file| {
                 let chosen = registry.path(&file.id).map(PathBuf::from).ok_or_else(|| {
@@ -632,7 +647,8 @@ pub async fn plan_changes(app: AppHandle, files: Vec<StagedFile>) -> Result<Plan
                     changes: file.changes,
                 })
             })
-            .collect::<Result<Vec<_>, AppError>>()?
+            .collect::<Result<Vec<_>, AppError>>()?;
+        (inputs, sources)
     };
     let cancel = CancelToken::default();
     if let Some(previous) = app
@@ -650,7 +666,14 @@ pub async fn plan_changes(app: AppHandle, files: Vec<StagedFile>) -> Result<Plan
             .snapshot(&tool, &CancelToken::default())
             .ok();
         let work_dir = app.path().app_cache_dir().map_err(internal)?;
-        let mut plan = build_plan(&tool, snapshot.as_deref(), inputs, &work_dir, &cancel)?;
+        let mut plan = build_plan(
+            &tool,
+            snapshot.as_deref(),
+            inputs,
+            &sources,
+            &work_dir,
+            &cancel,
+        )?;
         static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
         plan.plan_id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         *app.state::<PlansState>().lock().map_err(internal)? = Some(plan.clone());

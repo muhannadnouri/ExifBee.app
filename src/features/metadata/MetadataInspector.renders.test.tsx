@@ -41,6 +41,7 @@ describe('inspector re-render guard', () => {
         reading
         onEdit={noEdit}
         onRemove={noEdit}
+        onCopy={noEdit}
         staged={none}
       />,
     );
@@ -54,6 +55,7 @@ describe('inspector re-render guard', () => {
           reading
           onEdit={noEdit}
           onRemove={noEdit}
+          onCopy={noEdit}
           staged={none}
         />,
       );
@@ -66,6 +68,7 @@ describe('inspector re-render guard', () => {
         reading
         onEdit={noEdit}
         onRemove={noEdit}
+        onCopy={noEdit}
         staged={none}
       />,
     );

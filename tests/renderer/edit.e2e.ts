@@ -217,3 +217,30 @@ test('applies a reviewed plan, with backups unless overwriting is confirmed', as
     'Changed and verified /home/user/photo.jpg; backup: /home/user/photo.jpg_original',
   );
 });
+
+// @req FR-013, SEC-004, UX-004
+test('copies tags from the inspected file to other files through review', async ({ page }) => {
+  await mockIpc(page, [PHOTO, { ...PHOTO, sourceFile: '/home/user/other.jpg', tags: [] }]);
+  await page.goto('/');
+  await addVia(page, 'Files…');
+  await addVia(page, 'Files…');
+  await page.getByRole('option', { name: /photo.jpg/ }).click();
+  const metadata = page.getByRole('region', { name: 'Metadata' });
+  await metadata.getByRole('button', { name: 'Copy to other files…' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Copy tags to other files' });
+  await dialog.getByRole('checkbox', { name: 'other.jpg' }).check();
+  expect(await violations(page)).toEqual([]);
+  await dialog.getByRole('button', { name: 'Stage copy to 1 file' }).click();
+
+  await page.getByRole('button', { name: /Actions \(1 staged\)/ }).click();
+  await expect(page.getByRole('region', { name: 'Staged for other.jpg' })).toContainText(
+    'Copy from photo.jpg: all metadata',
+  );
+  await page.getByRole('button', { name: 'Review changes…' }).click();
+  const review = page.getByRole('dialog', { name: 'Review changes' });
+  const plan = review.getByRole('region', { name: 'Plan for other.jpg' });
+  await expect(plan).toContainText('Copy from photo.jpg: all metadata writes 2 tags');
+  await plan.getByText('Show the tags').click();
+  await expect(plan).toContainText('IFD0:Make = Canon, XMP-dc:Subject = bee, two, words');
+  expect(await violations(page)).toEqual([]);
+});

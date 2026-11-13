@@ -7,7 +7,7 @@
 
 use super::argv::Args;
 use super::process::{self, CancelToken, RunError};
-use super::read::{read_metadata, ReadError};
+use super::read::{read_metadata, FileMetadata, ReadError};
 use super::resolver::ExifTool;
 use crate::domain::edit::DeleteGroup;
 use crate::domain::metadata::TagEntry;
@@ -65,41 +65,16 @@ pub fn preview_group_removal(
     cancel: &CancelToken,
 ) -> Result<RemovalPreview, ReadError> {
     let before = read_metadata(tool, path)?;
-    let scratch = Scratch(private_folder(work_dir)?);
-    let mut name = std::ffi::OsString::from("preview");
-    if let Some(extension) = path.extension() {
-        name.push(".");
-        name.push(extension);
-    }
-    let copy = scratch.0.join(name);
-    let args = Args::new()
+    let edits = Args::new()
         .delete_group(delete)
-        .and_then(|args| args.output(&copy))
-        .and_then(|args| args.files([path]))
         .map_err(|error| ReadError::InvalidInput(error.to_string()))?;
-    let output = process::run(
-        &tool.path,
-        args.as_slice(),
-        PREVIEW_TIMEOUT,
-        MAX_PREVIEW_OUTPUT,
-        cancel,
-    )
-    .map_err(|error| match error {
-        RunError::Cancelled => ReadError::Cancelled,
-        error => ReadError::ProcessFailure(format!("ExifTool {error}")),
-    })?;
-    let messages = String::from_utf8_lossy(&output.stderr)
-        .lines()
-        .map(|line| line.trim().to_string())
-        .filter(|line| !line.is_empty())
-        .collect();
-    if !copy.is_file() {
+    let DryRun { after, messages } = dry_run(tool, path, edits, work_dir, cancel)?;
+    let Some(after) = after else {
         return Ok(RemovalPreview {
             removed: Vec::new(),
             messages,
         });
-    }
-    let after = read_metadata(tool, &copy)?;
+    };
     let mut left: HashMap<(String, String), usize> = HashMap::new();
     for tag in after.tags {
         *left.entry((tag.group1, tag.name)).or_default() += 1;
@@ -119,6 +94,58 @@ pub fn preview_group_removal(
         )
         .collect();
     Ok(RemovalPreview { removed, messages })
+}
+
+/// What ExifTool did to a private copy: the copy as read back (`None` when ExifTool made no
+/// copy, e.g. a format it cannot write) and its warnings and errors.
+pub struct DryRun {
+    pub after: Option<FileMetadata>,
+    pub messages: Vec<String>,
+}
+
+/// Runs `edits` against `path` with the result written to a new file in a private folder under
+/// `work_dir` (`-o`), reads that copy, and deletes the folder. `path` is only read. Used for
+/// group removals (S4-T02) and copies (S4-T06), whose effect only ExifTool can tell.
+pub fn dry_run(
+    tool: &ExifTool,
+    path: &Path,
+    edits: Args,
+    work_dir: &Path,
+    cancel: &CancelToken,
+) -> Result<DryRun, ReadError> {
+    let scratch = Scratch(private_folder(work_dir)?);
+    let mut name = std::ffi::OsString::from("preview");
+    if let Some(extension) = path.extension() {
+        name.push(".");
+        name.push(extension);
+    }
+    let copy = scratch.0.join(name);
+    let args = edits
+        .output(&copy)
+        .and_then(|args| args.files([path]))
+        .map_err(|error| ReadError::InvalidInput(error.to_string()))?;
+    let output = process::run(
+        &tool.path,
+        args.as_slice(),
+        PREVIEW_TIMEOUT,
+        MAX_PREVIEW_OUTPUT,
+        cancel,
+    )
+    .map_err(|error| match error {
+        RunError::Cancelled => ReadError::Cancelled,
+        error => ReadError::ProcessFailure(format!("ExifTool {error}")),
+    })?;
+    let messages = String::from_utf8_lossy(&output.stderr)
+        .lines()
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect();
+    let after = if copy.is_file() {
+        Some(read_metadata(tool, &copy)?)
+    } else {
+        None
+    };
+    Ok(DryRun { after, messages })
 }
 
 /// A new folder only this user can open, named so concurrent previews never share one.

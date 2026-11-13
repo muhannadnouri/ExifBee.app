@@ -170,6 +170,72 @@ pub enum Change {
     Set(SetTag),
     DeleteTag(DeleteTag),
     DeleteGroup(DeleteGroup),
+    CopyTags(CopyTags),
+}
+
+/// Copy tags from another file added in this session (S4-T06, FR-013): ExifTool's
+/// `-TagsFromFile`, keeping each tag's group.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct CopyTags {
+    /// The source's file ID; the plan resolves it through the registry.
+    pub source: String,
+    pub what: CopySelection,
+}
+
+/// What a copy takes from the source.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub enum CopySelection {
+    /// Every tag ExifTool can copy (`-all:all`; file-system properties are not included).
+    All,
+    /// One family (`EXIF`) or specific group (`XMP-dc`): `-GROUP:all`.
+    Group { group: String },
+    /// Exact tags: `-GROUP:NAME` each.
+    Tags { tags: Vec<TagName> },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct TagName {
+    pub group: String,
+    pub name: String,
+}
+
+/// Most exact tags one copy may name; a bound on renderer input.
+pub const MAX_COPY_TAGS: usize = 10_000;
+
+impl CopyTags {
+    /// Why this copy cannot be staged or written, if it cannot.
+    pub fn problem(&self) -> Option<String> {
+        match &self.what {
+            CopySelection::All => None,
+            CopySelection::Group { group } if !valid_name(group) => {
+                Some(format!("{group} is not a group name"))
+            }
+            CopySelection::Group { group } if KEPT_GROUPS.contains(&group.as_str()) => Some(
+                format!("{group} is not stored in the file as metadata, so it cannot be copied"),
+            ),
+            CopySelection::Group { .. } => None,
+            CopySelection::Tags { tags } if tags.is_empty() => {
+                Some("Choose at least one tag to copy".into())
+            }
+            CopySelection::Tags { tags } if tags.len() > MAX_COPY_TAGS => Some(format!(
+                "At most {MAX_COPY_TAGS} tags can be copied at once"
+            )),
+            CopySelection::Tags { tags } => tags
+                .iter()
+                .find_map(|tag| tag_problem(&tag.group, &tag.name)),
+        }
+    }
 }
 
 /// A file's staged changes, by the ID the registry issued.

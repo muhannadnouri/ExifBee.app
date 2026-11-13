@@ -6,13 +6,17 @@
 mod common;
 
 use common::harness::{expect_absent, golden_dir, sha256, value, Engine, Workspace};
+use exifbee_lib::adapter::exiftool::argv::Args;
 use exifbee_lib::adapter::exiftool::process::CancelToken;
-use exifbee_lib::domain::edit::{Change, DeleteGroup, DeleteTag, EditValue, SetTag};
+use exifbee_lib::domain::edit::{
+    Change, CopySelection, CopyTags, DeleteGroup, DeleteTag, EditValue, SetTag, TagName,
+};
 use exifbee_lib::service::apply::{apply_plan, BackupPolicy, Outcome};
 use exifbee_lib::service::capabilities::{CapabilityCache, CapabilitySnapshot};
 use exifbee_lib::service::files::FileIdentity;
 use exifbee_lib::service::plan::{build_plan, write_args, FilePlan, PlanInput, PlanPreview};
 use serde_json::json;
+use std::collections::HashMap;
 use std::fs;
 use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::{Path, PathBuf};
@@ -77,6 +81,7 @@ impl Planner {
             &self.engine.tool,
             Some(&self.snapshot),
             vec![input],
+            &HashMap::new(),
             self.cache.path(),
             &CancelToken::default(),
         )
@@ -234,13 +239,10 @@ fn a_file_that_changed_or_moved_after_it_was_read_is_skipped() {
         problems(&plan)
     );
 
-    // Never inspected in this session, or gone since.
+    // Never opened in this session (a copy destination): planned against the file as it is
+    // now, which the review shows; a file gone since is skipped.
     let plan = planner.plan(&first, None, change());
-    assert!(
-        problems(&plan).contains("not inspected"),
-        "{}",
-        problems(&plan)
-    );
+    assert!(plan.ready(), "{}", problems(&plan));
     let gone = ws.copy_as("metadata.jpg", "gone.jpg");
     let recorded = FileIdentity::of(&gone).unwrap();
     fs::remove_file(&gone).unwrap();
@@ -352,6 +354,24 @@ fn changes_that_no_longer_fit_the_file_skip_it_with_every_reason() {
 
 /// One stored plan of one or more files, as `plan_changes` would keep it.
 fn preview(planner: &Planner, files: Vec<(&Path, Vec<Change>)>) -> PlanPreview {
+    preview_with(planner, files, &[])
+}
+
+/// Like [`preview`]; every planned file is also a copy source under its ID (`f0`, `f1`, …),
+/// and `extra` adds sources that are not planned.
+fn preview_with(
+    planner: &Planner,
+    files: Vec<(&Path, Vec<Change>)>,
+    extra: &[(&str, &Path)],
+) -> PlanPreview {
+    let mut sources: HashMap<String, PathBuf> = files
+        .iter()
+        .enumerate()
+        .map(|(index, (path, _))| (format!("f{index}"), path.to_path_buf()))
+        .collect();
+    for (id, path) in extra {
+        sources.insert(id.to_string(), path.to_path_buf());
+    }
     let inputs = files
         .into_iter()
         .enumerate()
@@ -366,6 +386,7 @@ fn preview(planner: &Planner, files: Vec<(&Path, Vec<Change>)>) -> PlanPreview {
         &planner.engine.tool,
         Some(&planner.snapshot),
         inputs,
+        &sources,
         planner.cache.path(),
         &CancelToken::default(),
     )
@@ -411,12 +432,12 @@ fn originals_are_overwritten_only_by_the_explicit_policy() {
     let photo = ws.copy("metadata.jpg");
     // A value spelled like the option stays a value: the default arguments never overwrite.
     let changes = vec![set("IFD0", "Software", "-overwrite_original")];
-    let default = write_args(&changes, &photo, false).unwrap();
+    let default = write_args(&changes, &photo, false, &HashMap::new()).unwrap();
     assert!(default
         .as_slice()
         .iter()
         .all(|arg| arg != "-overwrite_original"));
-    let explicit = write_args(&changes, &photo, true).unwrap();
+    let explicit = write_args(&changes, &photo, true, &HashMap::new()).unwrap();
     assert_eq!(explicit.as_slice()[0], "-overwrite_original");
 
     let plan = preview(&planner, vec![(&photo, changes)]);
@@ -639,4 +660,271 @@ fn a_tag_the_plan_did_not_touch_that_changed_is_a_mismatch() {
         file.details,
         ["IFD0:Artist: changed unexpectedly, was Someone else, now ExifBee Fixtures"]
     );
+}
+
+fn copy(source: &str, what: CopySelection) -> Change {
+    Change::CopyTags(CopyTags {
+        source: source.into(),
+        what,
+    })
+}
+
+// @req FR-013, FR-014, FR-017
+#[test]
+fn copy_metadata_between_compatible_files() {
+    let planner = Planner::new();
+    let mut ws = Workspace::new("copy-formats");
+    let source = ws.copy_as("metadata.jpg", "source.jpg");
+    let png = ws.copy("metadata.png");
+    let pdf = ws.copy("metadata.pdf");
+    let plan = preview_with(
+        &planner,
+        vec![
+            (&png, vec![copy("src", CopySelection::All)]),
+            (&pdf, vec![copy("src", CopySelection::All)]),
+        ],
+        &[("src", &source)],
+    );
+    let [to_png, to_pdf] = &plan.files[..] else {
+        panic!()
+    };
+    assert!(
+        to_png.ready() && to_pdf.ready(),
+        "{} {}",
+        problems(to_png),
+        problems(to_pdf)
+    );
+    assert_eq!(
+        to_png.changes[0].target,
+        "Copy from source.jpg: all metadata"
+    );
+    let copies = |plan: &FilePlan| -> Vec<String> {
+        plan.changes[0]
+            .copies
+            .iter()
+            .map(|tag| format!("{}={}", tag.key, tag.value))
+            .collect()
+    };
+    assert!(
+        copies(to_png).contains(&"IFD0:Make=ExifBee EXIF Make".to_string()),
+        "{:?}",
+        copies(to_png)
+    );
+    // JFIF belongs to JPEG: a PNG cannot hold it, and only that is reported.
+    let png_dropped = &to_png.changes[0].cannot_copy;
+    assert!(
+        !png_dropped.is_empty() && png_dropped.iter().all(|key| key.starts_with("JFIF:")),
+        "{png_dropped:?}"
+    );
+    // A PDF cannot hold EXIF: ExifTool drops it silently, the plan says so.
+    assert!(
+        !copies(to_pdf).iter().any(|tag| tag.starts_with("IFD0:")),
+        "{:?}",
+        copies(to_pdf)
+    );
+    assert!(to_pdf.changes[0]
+        .cannot_copy
+        .contains(&"IFD0:Make".to_string()));
+    assert!(
+        copies(to_pdf).iter().any(|tag| tag.starts_with("XMP-dc:")),
+        "{:?}",
+        copies(to_pdf)
+    );
+
+    let result = apply_plan(&planner.engine.tool, &plan, BackupPolicy::KeepBackups);
+    for (file, fixture) in result.files.iter().zip(["metadata.png", "metadata.pdf"]) {
+        assert_eq!(file.outcome, Outcome::Changed, "{file:#?}");
+        let backup = PathBuf::from(file.backup.as_deref().unwrap());
+        assert_eq!(sha256(&backup), sha256(&golden_dir().join(fixture)));
+    }
+    assert_eq!(
+        value(&planner.engine.read(&png), "IFD0:Make"),
+        json!("ExifBee EXIF Make")
+    );
+    expect_absent(&planner.engine.read(&pdf), "IFD0:Make");
+    ws.expect_unchanged(&source);
+}
+
+// @req FR-013
+#[test]
+fn a_group_or_exact_tags_copy_only_what_was_chosen() {
+    let planner = Planner::new();
+    let mut ws = Workspace::new("copy-selection");
+    let source = ws.copy_as("metadata.jpg", "source.jpg");
+    let group = ws.copy_as("no-metadata.jpg", "group.jpg");
+    let tags = ws.copy_as("no-metadata.jpg", "tags.jpg");
+    let make = TagName {
+        group: "IFD0".into(),
+        name: "Make".into(),
+    };
+    let plan = preview_with(
+        &planner,
+        vec![
+            (
+                &group,
+                vec![copy(
+                    "src",
+                    CopySelection::Group {
+                        group: "XMP-dc".into(),
+                    },
+                )],
+            ),
+            (
+                &tags,
+                vec![copy(
+                    "src",
+                    CopySelection::Tags {
+                        tags: vec![make.clone(), make],
+                    },
+                )],
+            ),
+        ],
+        &[("src", &source)],
+    );
+    let keys = |index: usize| -> Vec<String> {
+        plan.files[index].changes[0]
+            .copies
+            .iter()
+            .map(|tag| tag.key.clone())
+            .collect()
+    };
+    assert!(
+        keys(0).iter().all(|key| key.starts_with("XMP-dc:")),
+        "{:?}",
+        keys(0)
+    );
+    assert!(keys(1).contains(&"IFD0:Make".to_string()), "{:?}", keys(1));
+    assert!(
+        !keys(1).iter().any(|key| key.starts_with("XMP")),
+        "{:?}",
+        keys(1)
+    );
+    // The same tag named twice becomes one selector.
+    let args: Vec<String> = plan.files[1]
+        .args
+        .as_ref()
+        .unwrap()
+        .as_slice()
+        .iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        args,
+        [
+            "-TagsFromFile",
+            &source.display().to_string(),
+            "-IFD0:Make",
+            "--",
+            &tags.display().to_string()
+        ]
+    );
+    let result = apply_plan(&planner.engine.tool, &plan, BackupPolicy::KeepBackups);
+    assert!(
+        result
+            .files
+            .iter()
+            .all(|file| file.outcome == Outcome::Changed),
+        "{result:#?}"
+    );
+    expect_absent(&planner.engine.read(&group), "IFD0:Make");
+}
+
+// @req FR-013, SEC-006
+#[test]
+fn copies_onto_themselves_unwritable_or_empty_or_from_a_changed_source_are_refused() {
+    let planner = Planner::new();
+    let mut ws = Workspace::new("copy-refused");
+    let source = ws.copy_as("metadata.jpg", "source.jpg");
+    let link = ws.path().join("link.jpg");
+    symlink(&source, &link).unwrap();
+    let zip = ws.copy("archive.zip");
+    let target = ws.copy_as("no-metadata.jpg", "target.jpg");
+    let plan = preview_with(
+        &planner,
+        vec![
+            (&source, vec![copy("src", CopySelection::All)]),
+            // The same real file through a link.
+            (&link, vec![copy("src", CopySelection::All)]),
+            (&zip, vec![copy("src", CopySelection::All)]),
+            (
+                &target,
+                vec![copy(
+                    "src",
+                    CopySelection::Group {
+                        group: "IPTC".into(),
+                    },
+                )],
+            ),
+            (&target, vec![copy("nobody", CopySelection::All)]),
+        ],
+        &[("src", &source)],
+    );
+    let reasons: Vec<String> = plan.files.iter().map(problems).collect();
+    assert!(
+        reasons[0].contains("cannot be copied onto itself"),
+        "{}",
+        reasons[0]
+    );
+    assert!(
+        reasons[1].contains("cannot be copied onto itself"),
+        "{}",
+        reasons[1]
+    );
+    assert!(reasons[2].contains("not writable"), "{}", reasons[2]);
+    assert!(reasons[3].contains("nothing to copy"), "{}", reasons[3]);
+    assert!(
+        reasons[4].contains("not a file added in this session"),
+        "{}",
+        reasons[4]
+    );
+    for refused in [
+        CopySelection::Group {
+            group: "System".into(),
+        },
+        CopySelection::Tags { tags: vec![] },
+        CopySelection::Tags {
+            tags: vec![TagName {
+                group: "IFD0".into(),
+                name: "Make<FileName".into(),
+            }],
+        },
+    ] {
+        let change = CopyTags {
+            source: "src".into(),
+            what: refused,
+        };
+        assert!(change.problem().is_some() && Args::new().copy_from(&source, &change).is_err());
+    }
+    assert!(Args::new()
+        .copy_from(
+            Path::new("relative.jpg"),
+            &CopyTags {
+                source: "src".into(),
+                what: CopySelection::All
+            }
+        )
+        .is_err());
+
+    // A source changed between review and apply: the destination is left as it is.
+    let fresh = ws.copy_as("no-metadata.jpg", "fresh.jpg");
+    let plan = preview_with(
+        &planner,
+        vec![(&fresh, vec![copy("src", CopySelection::All)])],
+        &[("src", &source)],
+    );
+    assert!(plan.files[0].ready(), "{}", problems(&plan.files[0]));
+    fs::write(
+        &source,
+        fs::read(golden_dir().join("metadata.png")).unwrap(),
+    )
+    .unwrap();
+    let result = apply_plan(&planner.engine.tool, &plan, BackupPolicy::KeepBackups);
+    assert_eq!(result.files[0].outcome, Outcome::Skipped, "{result:#?}");
+    assert!(result.files[0]
+        .message
+        .as_deref()
+        .unwrap()
+        .contains("copies from changed"));
+    ws.expect_unchanged(&fresh);
+    ws.expect_unchanged(&zip);
 }

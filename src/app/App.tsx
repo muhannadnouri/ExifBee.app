@@ -9,6 +9,7 @@ import { MetadataInspector, TAG_SEARCH_ID } from '../features/metadata/MetadataI
 import { ShortcutsDialog } from '../features/help/ShortcutsDialog';
 import { SettingsDialog } from '../features/settings/SettingsDialog';
 import { ThemeSwitcher } from '../features/settings/ThemeSwitcher';
+import { CopyTagsDialog } from '../features/edit/CopyTagsDialog';
 import { PlanPreviewDialog } from '../features/edit/PlanPreviewDialog';
 import { RemoveGroupDialog } from '../features/edit/RemoveGroupDialog';
 import { StagedChanges, changeLabel, stagedKey } from '../features/edit/StagedChanges';
@@ -134,6 +135,9 @@ export function App() {
   // The tag being edited in the selected file (`tag: null` = Add tag); closed when undefined.
   const [editing, setEditing] = useState<{ tag: TagEntry | null } | undefined>(undefined);
   const [removing, setRemoving] = useState<string | undefined>(undefined);
+  const [copying, setCopying] = useState<
+    { shown: TagEntry[]; group: string | undefined } | undefined
+  >(undefined);
   const [reviewing, setReviewing] = useState<StagedFile[] | undefined>(undefined);
   // Background read summaries by file ID. The Map is updated in place (setting a key is
   // idempotent, so a repeated updater is harmless) and rewrapped to re-render: copying 200,000
@@ -469,13 +473,21 @@ export function App() {
   // Stable, so the memoized inspector does not redraw when unrelated state changes.
   const editTag = useCallback((tag: TagEntry | null) => setEditing({ tag }), []);
   const removeGroup = useCallback((group: string) => setRemoving(group), []);
+  const copyTags = useCallback(
+    (shown: TagEntry[], group: string | undefined) => setCopying({ shown, group }),
+    [],
+  );
   const stagedHere = useMemo(
     () =>
       new Set(
         staged
           .filter((item) => item.fileId === selected)
           .flatMap(({ edit }) =>
-            edit.kind === 'deleteGroup' ? edit.removed : [`${edit.group}:${edit.name}`],
+            edit.kind === 'deleteGroup'
+              ? edit.removed
+              : edit.kind === 'copyTags'
+                ? []
+                : [`${edit.group}:${edit.name}`],
           ),
       ),
     [staged, selected],
@@ -661,6 +673,7 @@ export function App() {
             reading={selected !== null}
             onEdit={editTag}
             onRemove={removeGroup}
+            onCopy={copyTags}
             staged={stagedHere}
           />
         </section>
@@ -702,7 +715,12 @@ export function App() {
                   changes: staged
                     .filter((item) => item.fileId === id)
                     .map(({ edit }) =>
-                      edit.kind === 'deleteGroup' ? { kind: edit.kind, group: edit.group } : edit,
+                      // Display-only fields stay here; Rust plans removals and copies itself.
+                      edit.kind === 'deleteGroup'
+                        ? { kind: edit.kind, group: edit.group }
+                        : edit.kind === 'copyTags'
+                          ? { kind: edit.kind, source: edit.source, what: edit.what }
+                          : edit,
                     ),
                 })),
               )
@@ -770,6 +788,32 @@ export function App() {
           files={reviewing}
           onApplied={applied}
           onClose={() => setReviewing(undefined)}
+        />
+      )}
+      {copying && selected && file && (
+        <CopyTagsDialog
+          sourceId={selected}
+          source={file}
+          files={files}
+          shown={copying.shown}
+          group={copying.group}
+          onStage={(destinations, change) => {
+            const keys = new Set(destinations.map((id) => stagedKey(id, change)));
+            const added = destinations.map((id) => ({
+              fileId: id,
+              fileName: files.find((candidate) => candidate.id === id)?.name ?? id,
+              edit: change,
+              before: null,
+            }));
+            setStaged((current) => [
+              ...current.filter((item) => !keys.has(stagedKey(item.fileId, item.edit))),
+              ...added,
+            ]);
+            setStatus(
+              `Staged ${changeLabel(change)} for ${plural(destinations.length, 'file', 'files')}; nothing is written yet`,
+            );
+          }}
+          onClose={() => setCopying(undefined)}
         />
       )}
       {removing && selected && file && (

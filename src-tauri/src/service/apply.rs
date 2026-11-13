@@ -118,6 +118,12 @@ fn apply_file(tool: &ExifTool, file: &FilePlan, policy: BackupPolicy) -> FileOut
         )
     } else if !can_write(target) {
         Some("You do not have permission to change this file or the folder it is in, so it is left as it is.")
+    } else if file
+        .sources
+        .values()
+        .any(|source| FileIdentity::of(&source.real_path).ok().as_ref() != Some(source))
+    {
+        Some("A file it copies from changed after the changes were reviewed; it was left as it is. Review again.")
     } else if sibling(target, "_exiftool_tmp").symlink_metadata().is_ok() {
         Some("A temporary file from an earlier ExifTool run is in the way; the file was left as it is.")
     } else {
@@ -131,7 +137,7 @@ fn apply_file(tool: &ExifTool, file: &FilePlan, policy: BackupPolicy) -> FileOut
     let backup = sibling(target, "_original");
     let had_backup = backup.symlink_metadata().is_ok();
     let overwrite = policy == BackupPolicy::OverwriteOriginals;
-    let args = match write_args(&file.edits, target, overwrite) {
+    let args = match write_args(&file.edits, target, overwrite, &file.sources) {
         Ok(args) => args,
         Err(error) => {
             result.outcome = Outcome::Failed;

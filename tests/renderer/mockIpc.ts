@@ -180,7 +180,32 @@ export async function mockIpc(page: Page, reads: MockRead[] = SAMPLE_READS) {
                       )
                       .filter((tag) => !['System', 'ExifTool', 'Composite'].includes(tag.group1))
                       .map((tag) => `${tag.group1}:${tag.name}`),
+                    copies: [],
+                    cannotCopy: [],
                   };
+                // A copy writes every non-file tag of the source; nothing is dropped.
+                if (change.kind === 'copyTags') {
+                  const source = registered.get(change.source);
+                  const from = (source?.tags ?? []) as Commands['read_file']['tags'];
+                  return {
+                    target: `Copy from ${source?.sourceFile.split('/').pop() ?? change.source}: ${
+                      change.what.kind === 'all'
+                        ? 'all metadata'
+                        : change.what.kind === 'group'
+                          ? `${change.what.group} group`
+                          : `${change.what.tags.length} tags`
+                    }`,
+                    before: null,
+                    after: null,
+                    removes: [],
+                    copies: from
+                      .filter(
+                        (t) => !['System', 'ExifTool', 'Composite', 'File'].includes(t.group1),
+                      )
+                      .map((t) => ({ key: `${t.group1}:${t.name}`, value: text(t) ?? '' })),
+                    cannotCopy: [],
+                  };
+                }
                 const tag = tags.find((t) => t.group1 === change.group && t.name === change.name);
                 return {
                   target: `${change.group}:${change.name}`,
@@ -192,6 +217,8 @@ export async function mockIpc(page: Page, reads: MockRead[] = SAMPLE_READS) {
                         ? change.value.text
                         : change.value.items.join(', '),
                   removes: [],
+                  copies: [],
+                  cannotCopy: [],
                 };
               }),
             };

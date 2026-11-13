@@ -4,7 +4,7 @@
 
 use crate::domain::edit::{Change, EditValue};
 use crate::domain::metadata::{MetadataValue, TagEntry};
-use crate::service::plan::FilePlan;
+use crate::service::plan::{shown, FilePlan};
 use std::collections::{HashMap, HashSet};
 
 /// Groups that change on any write or are not stored in the file; never compared.
@@ -84,12 +84,41 @@ pub fn verify(plan: &FilePlan, after: &[TagEntry]) -> Verification {
                 }
                 touched.insert(key);
             }
-            Change::DeleteGroup(_) => {}
+            Change::DeleteGroup(_) | Change::CopyTags(_) => {}
         }
     }
+    // Copies: every tag the dry run wrote reads back with that value, unless a value set
+    // later in the same plan replaces it.
+    for copied in plan.changes.iter().flat_map(|change| &change.copies) {
+        touched.insert(copied.key.clone());
+        if set_again.contains(&copied.key) {
+            continue;
+        }
+        let Some((group, name)) = copied.key.split_once(':') else {
+            continue;
+        };
+        let actual: Vec<String> = found
+            .get(&(group, name))
+            .into_iter()
+            .flatten()
+            .map(|tag| texts(&tag.value).join(", "))
+            .collect();
+        if !actual.iter().any(|value| same_value(&copied.value, value)) {
+            result.problems.push(match actual.first() {
+                Some(value) => format!("{}: copied {}, reads {value}", copied.key, copied.value),
+                None => format!("{}: copied {}, not in the file", copied.key, copied.value),
+            });
+        }
+    }
+    let copied: HashSet<&String> = plan
+        .changes
+        .iter()
+        .flat_map(|change| &change.copies)
+        .map(|copied| &copied.key)
+        .collect();
     let removed: HashSet<&String> = plan.changes.iter().flat_map(|c| &c.removes).collect();
     for key in &removed {
-        if !set_again.contains(*key) {
+        if !set_again.contains(*key) && !copied.contains(*key) {
             if let Some((group, name)) = key.split_once(':') {
                 if found.contains_key(&(group, name)) {
                     result.problems.push(format!("{key}: still in the file"));
@@ -137,7 +166,7 @@ fn texts(value: &MetadataValue) -> Vec<String> {
     match value {
         MetadataValue::Text { text } => vec![text.clone()],
         MetadataValue::List { items } => items.iter().flat_map(texts).collect(),
-        other => vec![format!("{other:?}")],
+        other => vec![shown(other)],
     }
 }
 

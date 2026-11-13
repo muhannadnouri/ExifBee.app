@@ -6,15 +6,17 @@ use crate::adapter::exiftool::argv::{Args, ArgsError};
 use crate::adapter::exiftool::display::{display, DisplayedCommand, Shell};
 use crate::adapter::exiftool::process::CancelToken;
 use crate::adapter::exiftool::read::{raw_is_utf8, read_metadata, FileMetadata, ReadError};
-use crate::adapter::exiftool::removal::preview_group_removal;
+use crate::adapter::exiftool::removal::{dry_run, preview_group_removal};
 use crate::adapter::exiftool::resolver::ExifTool;
-use crate::domain::edit::{Change, DeleteGroup, DeleteTag, EditValue, SetTag};
+use crate::domain::edit::{
+    Change, CopySelection, CopyTags, DeleteGroup, DeleteTag, EditValue, SetTag,
+};
 use crate::domain::metadata::{MetadataValue, TagEntry, Writability};
 use crate::platform::{can_write, free_bytes};
 use crate::service::capabilities::CapabilitySnapshot;
 use crate::service::files::{FileId, FileIdentity};
 use serde::Serialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
@@ -30,7 +32,8 @@ pub struct PlanInput {
     pub id: FileId,
     /// The path the user chose (it may be a symlink).
     pub chosen: PathBuf,
-    /// What the file was when the user inspected it; `None` if it was never read for inspection.
+    /// What the file was when the user inspected it; `None` if it was never read for inspection
+    /// (a copy destination), in which case its identity now is used.
     pub recorded: Option<FileIdentity>,
     pub changes: Vec<Change>,
 }
@@ -73,6 +76,10 @@ pub struct FilePlan {
     #[serde(skip)]
     #[cfg_attr(test, ts(skip))]
     pub identity: Option<FileIdentity>,
+    /// Each copy source as checked while planning; the executor checks them again (S4-T06).
+    #[serde(skip)]
+    #[cfg_attr(test, ts(skip))]
+    pub sources: HashMap<FileId, FileIdentity>,
     /// The file's tags as read while planning, for verifying untouched tags after the write.
     #[serde(skip)]
     #[cfg_attr(test, ts(skip))]
@@ -102,6 +109,19 @@ pub struct PlannedChange {
     pub after: Option<String>,
     /// `Group:Tag` of every tag a group removal takes, from a dry run made while planning.
     pub removes: Vec<String>,
+    /// For a copy: every tag it would write (copied, and any ExifTool adds), from a dry run.
+    pub copies: Vec<CopiedTag>,
+    /// For a copy: selected source tags this file cannot store (`Group:Tag`).
+    pub cannot_copy: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct CopiedTag {
+    /// `Group:Tag`.
+    pub key: String,
+    pub value: String,
 }
 
 /// Builds the plan for every staged file (SPEC §4.5 preflight).
@@ -121,13 +141,14 @@ pub fn build_plan(
     tool: &ExifTool,
     snapshot: Option<&CapabilitySnapshot>,
     inputs: Vec<PlanInput>,
+    sources: &HashMap<FileId, PathBuf>,
     work_dir: &Path,
     cancel: &CancelToken,
 ) -> Result<PlanPreview, ReadError> {
     let mut files = Vec::with_capacity(inputs.len());
     // shortcut: one read per file; batch these reads when plans reach many files (S5-T01).
     for input in inputs {
-        files.push(plan_file(tool, snapshot, input, work_dir, cancel)?);
+        files.push(plan_file(tool, snapshot, input, sources, work_dir, cancel)?);
     }
     Ok(PlanPreview { plan_id: 0, files })
 }
@@ -136,6 +157,7 @@ fn plan_file(
     tool: &ExifTool,
     snapshot: Option<&CapabilitySnapshot>,
     input: PlanInput,
+    sources: &HashMap<FileId, PathBuf>,
     work_dir: &Path,
     cancel: &CancelToken,
 ) -> Result<FilePlan, ReadError> {
@@ -155,6 +177,7 @@ fn plan_file(
         args: None,
         edits: Vec::new(),
         identity: None,
+        sources: HashMap::new(),
         before: Vec::new(),
         command: None,
     };
@@ -163,10 +186,13 @@ fn plan_file(
             .push("Nothing is staged for this file.".into());
         return Ok(plan);
     }
-    let Some(recorded) = input.recorded else {
-        plan.problems.push(
-            "This file was not inspected in this session; open it before applying changes.".into(),
-        );
+    // A copy destination need not have been opened: the review shows its fresh read instead.
+    let Some(recorded) = input
+        .recorded
+        .or_else(|| FileIdentity::of(&input.chosen).ok())
+    else {
+        plan.problems
+            .push("The file is missing or can no longer be read.".into());
         return Ok(plan);
     };
     let target = recorded.real_path.clone();
@@ -236,7 +262,8 @@ fn plan_file(
     ordered.sort_by_key(|change| match change {
         Change::DeleteGroup(_) => 0,
         Change::DeleteTag(_) => 1,
-        Change::Set(_) => 2,
+        Change::CopyTags(_) => 2,
+        Change::Set(_) => 3,
     });
     for change in &ordered {
         let label = match change {
@@ -246,6 +273,7 @@ fn plan_file(
             }
             Change::DeleteGroup(delete) if delete.is_all() => "All metadata".into(),
             Change::DeleteGroup(DeleteGroup { group }) => format!("{group} group"),
+            Change::CopyTags(copy) => copy_label(copy, sources),
         };
         if !seen.insert(label.clone()) {
             plan.problems
@@ -260,6 +288,13 @@ fn plan_file(
             Change::DeleteGroup(delete) => {
                 check_delete_group(tool, &target, delete, work_dir, cancel)?
             }
+            Change::CopyTags(copy) => check_copy(
+                tool, snapshot, &target, &file, copy, sources, work_dir, cancel,
+            )?
+            .map(|(planned, source)| {
+                plan.sources.insert(copy.source.clone(), source);
+                planned
+            }),
         };
         match checked {
             Ok(planned) => plan.changes.push(PlannedChange {
@@ -271,14 +306,14 @@ fn plan_file(
     }
     let deletes = ordered
         .iter()
-        .any(|change| !matches!(change, Change::Set(_)));
+        .any(|change| matches!(change, Change::DeleteTag(_) | Change::DeleteGroup(_)));
     if deletes && file_type(&file) == Some("PDF") {
         plan.warnings.push(
             "PDF changes are added to the end of the file: removed values are hidden from readers but can still be recovered from the file.".into(),
         );
     }
     if plan.problems.is_empty() {
-        let args = write_args(&ordered, &target, false)
+        let args = write_args(&ordered, &target, false, &plan.sources)
             .map_err(|error| ReadError::InvalidInput(error.to_string()))?;
         plan.command = Some(display(Shell::Posix, &tool.path, args.as_slice()));
         plan.args = Some(args);
@@ -296,7 +331,12 @@ fn plan_file(
 ///
 /// `overwrite` adds ExifTool's `-overwrite_original` (no `_original` backup); only the
 /// executor's explicit `OverwriteOriginals` policy sets it (S4-T04, SEC-005).
-pub fn write_args(changes: &[Change], target: &Path, overwrite: bool) -> Result<Args, ArgsError> {
+pub fn write_args(
+    changes: &[Change],
+    target: &Path,
+    overwrite: bool,
+    sources: &HashMap<FileId, FileIdentity>,
+) -> Result<Args, ArgsError> {
     let mut args = if overwrite {
         Args::new().options(&["-overwrite_original"])
     } else {
@@ -307,6 +347,12 @@ pub fn write_args(changes: &[Change], target: &Path, overwrite: bool) -> Result<
             Change::Set(edit) => args.set(edit)?,
             Change::DeleteTag(delete) => args.delete_tag(delete)?,
             Change::DeleteGroup(delete) => args.delete_group(delete)?,
+            Change::CopyTags(copy) => {
+                let source = sources.get(&copy.source).ok_or_else(|| {
+                    ArgsError::Edit(format!("the copy source {} was not checked", copy.source))
+                })?;
+                args.copy_from(&source.real_path, copy)?
+            }
         };
     }
     args.files([target])
@@ -335,7 +381,7 @@ fn matching<'a>(file: &'a FileMetadata, group: &str, name: &str) -> Vec<&'a TagE
 }
 
 /// A value as the diff shows it, like the inspector does.
-fn shown(value: &MetadataValue) -> String {
+pub fn shown(value: &MetadataValue) -> String {
     match value {
         MetadataValue::Text { text } => text.clone(),
         MetadataValue::List { items } => items.iter().map(shown).collect::<Vec<_>>().join(", "),
@@ -360,7 +406,152 @@ fn change(before: Option<String>, after: Option<String>) -> PlannedChange {
         before,
         after,
         removes: Vec::new(),
+        copies: Vec::new(),
+        cannot_copy: Vec::new(),
     }
+}
+
+/// `Copy from photo.jpg: all metadata`, `…: XMP-dc group`, `…: IFD0:Make`, `…: 3 tags`.
+fn copy_label(copy: &CopyTags, sources: &HashMap<FileId, PathBuf>) -> String {
+    let source = sources
+        .get(&copy.source)
+        .and_then(|path| path.file_name())
+        .map_or_else(
+            || copy.source.clone(),
+            |name| name.to_string_lossy().into_owned(),
+        );
+    let what = match &copy.what {
+        CopySelection::All => "all metadata".to_string(),
+        CopySelection::Group { group } => format!("{group} group"),
+        CopySelection::Tags { tags } if tags.len() == 1 => {
+            format!("{}:{}", tags[0].group, tags[0].name)
+        }
+        CopySelection::Tags { tags } => format!("{} tags", tags.len()),
+    };
+    format!("Copy from {source}: {what}")
+}
+
+/// Groups never copied or compared: file-system facts, derived values, ExifTool's notes, and
+/// the file's own structure (`File`).
+const NOT_COPIED: &[&str] = &["System", "ExifTool", "Composite", "File"];
+
+/// Checks a copy and finds exactly what it would write, by running it on a private copy of the
+/// destination (`-o`, like group removals): which tags it writes (copied, plus any ExifTool adds,
+/// such as required EXIF tags), and which selected source tags this file cannot store (EXIF
+/// into a PDF is dropped silently, probed on 13.55).
+///
+/// Returns the planned change and the source's identity, which the executor checks again.
+#[allow(clippy::too_many_arguments)]
+fn check_copy(
+    tool: &ExifTool,
+    snapshot: Option<&CapabilitySnapshot>,
+    target: &Path,
+    file: &FileMetadata,
+    copy: &CopyTags,
+    sources: &HashMap<FileId, PathBuf>,
+    work_dir: &Path,
+    cancel: &CancelToken,
+) -> Result<Result<(PlannedChange, FileIdentity), String>, ReadError> {
+    if let Some(problem) = copy.problem() {
+        return Ok(Err(problem));
+    }
+    let Some(source_path) = sources.get(&copy.source) else {
+        return Ok(Err("the source is not a file added in this session.".into()));
+    };
+    let Ok(source) = FileIdentity::of(source_path) else {
+        return Ok(Err(
+            "the source file is missing or can no longer be read.".into()
+        ));
+    };
+    if source.real_path == target {
+        return Ok(Err("a file cannot be copied onto itself.".into()));
+    }
+    let mut source_file = read_metadata(tool, &source.real_path)?;
+    if let Some(snapshot) = snapshot {
+        snapshot.annotate(&mut source_file);
+    }
+    let args = Args::new().copy_from(&source.real_path, copy);
+    let preview = match args {
+        Ok(args) => dry_run(tool, target, args, work_dir, cancel)?,
+        Err(error) => return Ok(Err(error.to_string())),
+    };
+    let Some(after) = preview.after else {
+        return Ok(Err(format!(
+            "ExifTool cannot write this file. {}",
+            preview.messages.join(" ")
+        )
+        .trim_end()
+        .to_string()));
+    };
+    let copies = changed_tags(&file.tags, &after.tags);
+    if copies.is_empty() {
+        return Ok(Err(format!(
+            "nothing to copy. {}",
+            preview.messages.join(" ")
+        )
+        .trim_end()
+        .to_string()));
+    }
+    let selected = source_file.tags.iter().filter(|tag| {
+        !NOT_COPIED.contains(&tag.group1.as_str())
+            && match &copy.what {
+                CopySelection::All => true,
+                CopySelection::Group { group } => {
+                    tag.group1 == *group || tag.group0.as_deref() == Some(group)
+                }
+                CopySelection::Tags { tags } => tags
+                    .iter()
+                    .any(|wanted| wanted.group == tag.group1 && wanted.name == tag.name),
+            }
+    });
+    let mut cannot_copy: Vec<String> = selected
+        .filter(|tag| {
+            let value = shown(&tag.value);
+            !after.tags.iter().any(|kept| {
+                kept.group1 == tag.group1 && kept.name == tag.name && shown(&kept.value) == value
+            })
+        })
+        .map(|tag| format!("{}:{}", tag.group1, tag.name))
+        .collect();
+    cannot_copy.dedup();
+    Ok(Ok((
+        PlannedChange {
+            copies,
+            cannot_copy,
+            ..change(None, None)
+        },
+        source,
+    )))
+}
+
+/// Tags in `after` that `before` does not have with the same value (by group and name).
+fn changed_tags(before: &[TagEntry], after: &[TagEntry]) -> Vec<CopiedTag> {
+    let mut left: HashMap<(&str, &str), Vec<String>> = HashMap::new();
+    for tag in before {
+        left.entry((&tag.group1, &tag.name))
+            .or_default()
+            .push(shown(&tag.value));
+    }
+    after
+        .iter()
+        .filter(|tag| !NOT_COPIED.contains(&tag.group1.as_str()) && tag.key != "XMP-x:XMPToolkit")
+        .filter_map(|tag| {
+            let value = shown(&tag.value);
+            let same = left.get_mut(&(tag.group1.as_str(), tag.name.as_str()));
+            match same
+                .and_then(|values| values.iter().position(|v| *v == value).map(|i| (values, i)))
+            {
+                Some((values, index)) => {
+                    values.remove(index);
+                    None
+                }
+                None => Some(CopiedTag {
+                    key: format!("{}:{}", tag.group1, tag.name),
+                    value,
+                }),
+            }
+        })
+        .collect()
 }
 
 /// The DEC-028 rules again, against the file as it is now.

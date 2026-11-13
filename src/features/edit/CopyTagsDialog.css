@@ -1,0 +1,39 @@
+.copy-tags {
+  display: grid;
+  gap: 0.6rem;
+  min-width: min(28rem, 80vw);
+}
+
+.copy-tags p {
+  margin: 0;
+}
+
+.copy-tags-what,
+.copy-tags-to {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.copy-tags-group,
+.copy-tags-select {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Many files must not push the buttons off screen. */
+.copy-tags-files {
+  display: grid;
+  gap: 0.2rem;
+  max-height: 12rem;
+  margin: 0;
+  padding: 0.3rem 0.5rem;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  list-style: none;
+}
