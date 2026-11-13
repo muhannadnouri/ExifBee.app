@@ -84,10 +84,34 @@ pub struct FilePlan {
     #[serde(skip)]
     #[cfg_attr(test, ts(skip))]
     pub before: Vec<TagEntry>,
-    /// The same arguments as a runnable POSIX command (shown and copied in S4-T07).
-    #[serde(skip)]
-    #[cfg_attr(test, ts(skip))]
-    pub command: Option<DisplayedCommand>,
+    /// The same arguments as commands to copy into a terminal, per shell and backup policy
+    /// (S4-T07, FR-015); `None` when skipped.
+    pub commands: Option<PlanCommands>,
+}
+
+/// One file's ExifTool command as each supported shell needs it (quoting proven in S2-T02).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct PlanCommands {
+    /// bash, zsh, dash (Linux, macOS).
+    pub posix: PolicyCommands,
+    /// PowerShell 7.3+ (Windows).
+    pub powershell: PolicyCommands,
+    /// `false` when a path is not valid UTF-8: the text would not name the same file.
+    pub exact: bool,
+    /// This system's shell, shown first: `powershell` on Windows, `posix` elsewhere (the
+    /// webview's user agent can claim another OS, so Rust decides).
+    pub system_shell: String,
+}
+
+/// The command with ExifTool's default backup, and with `-overwrite_original`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS), ts(export))]
+pub struct PolicyCommands {
+    pub keep_backups: String,
+    pub overwrite_originals: String,
 }
 
 impl FilePlan {
@@ -179,7 +203,7 @@ fn plan_file(
         identity: None,
         sources: HashMap::new(),
         before: Vec::new(),
-        command: None,
+        commands: None,
     };
     if input.changes.is_empty() {
         plan.problems
@@ -315,7 +339,26 @@ fn plan_file(
     if plan.problems.is_empty() {
         let args = write_args(&ordered, &target, false, &plan.sources)
             .map_err(|error| ReadError::InvalidInput(error.to_string()))?;
-        plan.command = Some(display(Shell::Posix, &tool.path, args.as_slice()));
+        let overwrite = write_args(&ordered, &target, true, &plan.sources)
+            .map_err(|error| ReadError::InvalidInput(error.to_string()))?;
+        let shown = |shell, args: &Args| display(shell, &tool.path, args.as_slice());
+        let all: Vec<DisplayedCommand> = [Shell::Posix, Shell::PowerShell]
+            .into_iter()
+            .flat_map(|shell| [shown(shell, &args), shown(shell, &overwrite)])
+            .collect();
+        let text = |index: usize| all[index].text.clone();
+        plan.commands = Some(PlanCommands {
+            posix: PolicyCommands {
+                keep_backups: text(0),
+                overwrite_originals: text(1),
+            },
+            powershell: PolicyCommands {
+                keep_backups: text(2),
+                overwrite_originals: text(3),
+            },
+            exact: all.iter().all(|command| command.exact),
+            system_shell: if cfg!(windows) { "powershell" } else { "posix" }.into(),
+        });
         plan.args = Some(args);
         plan.edits = ordered;
         plan.identity = Some(recorded);

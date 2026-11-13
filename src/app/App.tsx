@@ -139,6 +139,7 @@ export function App() {
     { shown: TagEntry[]; group: string | undefined } | undefined
   >(undefined);
   const [reviewing, setReviewing] = useState<StagedFile[] | undefined>(undefined);
+  const [reviewKey, setReviewKey] = useState(0);
   // Background read summaries by file ID. The Map is updated in place (setting a key is
   // idempotent, so a repeated updater is harmless) and rewrapped to re-render: copying 200,000
   // entries per update would cost more than the update itself.
@@ -506,6 +507,27 @@ export function App() {
     setStatus(`Staged ${changeLabel(edit)} for ${entry.name}; it is not written yet`);
   };
 
+  /** Opens Review changes for everything staged now; a new key starts a fresh review. */
+  const review = () => {
+    setReviewKey((key) => key + 1);
+    setReviewing(
+      [...new Set(staged.map((item) => item.fileId))].map((id) => ({
+        id,
+        // The dry-run list is the renderer's own; Rust plans the removal again.
+        changes: staged
+          .filter((item) => item.fileId === id)
+          .map(({ edit }) =>
+            // Display-only fields stay here; Rust plans removals and copies itself.
+            edit.kind === 'deleteGroup'
+              ? { kind: edit.kind, group: edit.group }
+              : edit.kind === 'copyTags'
+                ? { kind: edit.kind, source: edit.source, what: edit.what }
+                : edit,
+          ),
+      })),
+    );
+  };
+
   /** After a write: done files leave the staged list and are read again (new values, new identity). */
   const applied = (result: ApplyResult) => {
     const done = new Set(
@@ -707,24 +729,7 @@ export function App() {
               );
               setStatus(`Undid the staged change to ${changeLabel(item.edit)}`);
             }}
-            onReview={() =>
-              setReviewing(
-                [...new Set(staged.map((item) => item.fileId))].map((id) => ({
-                  id,
-                  // The dry-run list is the renderer's own; Rust plans the removal again.
-                  changes: staged
-                    .filter((item) => item.fileId === id)
-                    .map(({ edit }) =>
-                      // Display-only fields stay here; Rust plans removals and copies itself.
-                      edit.kind === 'deleteGroup'
-                        ? { kind: edit.kind, group: edit.group }
-                        : edit.kind === 'copyTags'
-                          ? { kind: edit.kind, source: edit.source, what: edit.what }
-                          : edit,
-                    ),
-                })),
-              )
-            }
+            onReview={review}
             onDiscardAll={() => {
               setStaged([]);
               setStatus('Discarded all staged changes');
@@ -785,8 +790,10 @@ export function App() {
       )}
       {reviewing && (
         <PlanPreviewDialog
+          key={reviewKey}
           files={reviewing}
           onApplied={applied}
+          onReviewAgain={review}
           onClose={() => setReviewing(undefined)}
         />
       )}

@@ -38,6 +38,7 @@ export type {
 export type { FileOutcome } from './bindings/FileOutcome';
 export type { Outcome } from './bindings/Outcome';
 export type { FilePlan } from './bindings/FilePlan';
+export type { PlanCommands } from './bindings/PlanCommands';
 export type { PlannedChange } from './bindings/PlannedChange';
 export type { CopySelection } from './bindings/CopySelection';
 export type { CopyTags } from './bindings/CopyTags';

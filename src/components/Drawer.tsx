@@ -14,7 +14,13 @@ export function Drawer({ id, title, open, onToggle, children }: Props) {
   return (
     <section className="drawer" aria-labelledby={`${id}-title`}>
       <h2 className="drawer-header" id={`${id}-title`}>
-        <button type="button" aria-expanded={open} aria-controls={id} onClick={onToggle}>
+        <button
+          type="button"
+          id={`${id}-toggle`}
+          aria-expanded={open}
+          aria-controls={id}
+          onClick={onToggle}
+        >
           {open ? '▾' : '▸'} {title}
         </button>
       </h2>

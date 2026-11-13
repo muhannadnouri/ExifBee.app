@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '../../components/atoms/Button';
+import { IconButton } from '../../components/atoms/IconButton';
 import { Checkbox } from '../../components/atoms/Checkbox';
+import { Select } from '../../components/atoms/Select';
 import { Notice } from '../../components/atoms/Notice';
 import { Dialog } from '../../components/Dialog';
 import { applyPlan, cancelRemovalPreview, planChanges } from '../../lib/ipc';
@@ -8,6 +10,7 @@ import type {
   ApplyResult,
   BackupPolicy,
   Outcome,
+  PlanCommands,
   PlannedChange,
   PlanPreview,
   StagedFile,
@@ -19,6 +22,8 @@ type Props = {
   files: StagedFile[];
   /** Called with every outcome once ExifTool has run, even if the dialog was closed meanwhile. */
   onApplied: (result: ApplyResult) => void;
+  /** Reviews what is still staged after a write (files that failed or were skipped). */
+  onReviewAgain?: () => void;
   onClose: () => void;
 };
 
@@ -36,6 +41,69 @@ const OUTCOME: Record<Outcome, string> = {
   failed: 'Failed, the file is as it was',
   skipped: 'Skipped, the file is as it was',
 };
+
+type Shell = 'posix' | 'powershell';
+const SHELLS: { value: Shell; label: string }[] = [
+  { value: 'posix', label: 'bash or zsh (Linux, macOS)' },
+  { value: 'powershell', label: 'PowerShell 7.3+ (Windows)' },
+];
+
+/** The file's exact ExifTool command for a terminal (FR-015), matching the backup choice. */
+function CommandBlock({
+  name,
+  commands,
+  keepBackups,
+}: {
+  name: string;
+  commands: PlanCommands;
+  keepBackups: boolean;
+}) {
+  // This system's shell first, so the command shown runs where ExifBee runs.
+  const [shell, setShell] = useState<Shell>(
+    commands.systemShell === 'powershell' ? 'powershell' : 'posix',
+  );
+  const [copied, setCopied] = useState('');
+  const policy = commands[shell];
+  const text = keepBackups ? policy.keepBackups : policy.overwriteOriginals;
+  return (
+    <details className="plan-command">
+      <summary>ExifTool command</summary>
+      <div className="plan-command-body">
+        <Select
+          aria-label={`Shell for ${name}`}
+          value={shell}
+          options={SHELLS}
+          onChange={setShell}
+        />
+        <pre tabIndex={0} aria-label={`ExifTool command for ${name}`}>
+          {text}
+        </pre>
+        {commands.exact ? (
+          <div className="plan-command-copy">
+            <IconButton
+              icon="copy"
+              label={`Copy the command for ${name}`}
+              onClick={() =>
+                void navigator.clipboard.writeText(text).then(
+                  () => setCopied('Copied'),
+                  () => setCopied('Could not copy; select the text instead'),
+                )
+              }
+            />
+            <span className="muted" role="status">
+              {copied}
+            </span>
+          </div>
+        ) : (
+          <p className="muted">
+            A path here is not valid text, so this command is not exact: it would not run on the
+            same file and cannot be copied.
+          </p>
+        )}
+      </div>
+    </details>
+  );
+}
 
 const plural = (count: number, one: string, many = `${one}s`) =>
   `${count} ${count === 1 ? one : many}`;
@@ -100,12 +168,13 @@ function ChangeLine({ change }: { change: PlannedChange }) {
  * and shows what would happen; Apply runs exactly that plan, once. Backups are kept unless the
  * user unticks them and confirms; each file then reports its own outcome.
  */
-export function PlanPreviewDialog({ files, onApplied, onClose }: Props) {
+export function PlanPreviewDialog({ files, onApplied, onReviewAgain, onClose }: Props) {
   const [state, setState] = useState<State>({ phase: 'checking' });
   const [keepBackups, setKeepBackups] = useState(true);
   const [confirming, setConfirming] = useState(false);
   const live = useRef(true);
   const keep = useRef<HTMLButtonElement>(null);
+  const done = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     live.current = true;
@@ -142,6 +211,11 @@ export function PlanPreviewDialog({ files, onApplied, onClose }: Props) {
     );
   };
 
+  // Apply disappears once it ran; keep the keyboard user in the dialog, on its next action.
+  useEffect(() => {
+    if (state.phase === 'done') done.current?.focus();
+  }, [state.phase]);
+
   const plan = state.phase === 'ready' || state.phase === 'applying' ? state.plan : null;
   const ready = plan?.files.filter((file) => file.problems.length === 0).length ?? 0;
   const skipped = (plan?.files.length ?? 0) - ready;
@@ -150,7 +224,13 @@ export function PlanPreviewDialog({ files, onApplied, onClose }: Props) {
     result?.files.filter((file) => file.outcome === outcome).length ?? 0;
 
   return (
-    <Dialog id="plan-preview" title="Review changes" open onClose={onClose}>
+    <Dialog
+      id="plan-preview"
+      title="Review changes"
+      open
+      onClose={onClose}
+      fallbackFocus="actions-drawer-toggle"
+    >
       <div className="plan">
         {state.phase === 'checking' && (
           <p role="status">Checking each file and change against the files as they are now…</p>
@@ -204,6 +284,9 @@ export function PlanPreviewDialog({ files, onApplied, onClose }: Props) {
             {file.backup && keepBackups && (
               <p className="muted">Backup of the original: {file.backup}</p>
             )}
+            {file.commands && (
+              <CommandBlock name={file.name} commands={file.commands} keepBackups={keepBackups} />
+            )}
           </section>
         ))}
         {result && (
@@ -245,6 +328,12 @@ export function PlanPreviewDialog({ files, onApplied, onClose }: Props) {
                 )}
               </section>
             ))}
+            {result.files.some(({ outcome }) => outcome === 'failed' || outcome === 'skipped') && (
+              <p className="muted">
+                Skipped and failed files keep their staged changes: fix the reason, then review
+                again.
+              </p>
+            )}
           </>
         )}
         {plan && ready > 0 && (
@@ -260,11 +349,40 @@ export function PlanPreviewDialog({ files, onApplied, onClose }: Props) {
                 backup.
               </Notice>
             )}
+            <details className="plan-help">
+              <summary>About backups</summary>
+              <ul>
+                <li>
+                  Before writing, ExifTool keeps each original next to it as{' '}
+                  <code>name_original</code>, for example <code>photo.jpg_original</code>.
+                </li>
+                <li>
+                  To restore a file, replace it with its <code>_original</code> copy.
+                </li>
+                <li>
+                  ExifBee never deletes backups; remove them yourself when you no longer need them.
+                </li>
+                <li>
+                  If a backup already exists, ExifTool keeps that older one and does not back up the
+                  current version.
+                </li>
+                <li>Without backups, the originals are overwritten and cannot be restored.</li>
+              </ul>
+            </details>
           </>
         )}
         {plan && ready === 0 && <p className="muted">Nothing can be applied.</p>}
         <div className="dialog-actions">
-          <Button onClick={onClose}>{result ? 'Done' : 'Cancel'}</Button>
+          {result &&
+            onReviewAgain &&
+            result.files.some(({ outcome }) => outcome === 'failed' || outcome === 'skipped') && (
+              <Button className="dialog-actions-start" onClick={onReviewAgain}>
+                Review again
+              </Button>
+            )}
+          <Button ref={result ? done : undefined} onClick={onClose}>
+            {result ? 'Done' : 'Cancel'}
+          </Button>
           {plan && (
             <Button
               className={keepBackups ? 'button-primary' : 'button-danger'}

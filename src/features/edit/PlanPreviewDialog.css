@@ -55,3 +55,40 @@
 .plan-differences {
   color: var(--danger);
 }
+
+.plan-command summary,
+.plan-help summary {
+  cursor: pointer;
+}
+
+.plan-command-body {
+  display: grid;
+  gap: 0.4rem;
+  margin-top: 0.4rem;
+  justify-items: start;
+}
+
+/* Commands keep their exact spacing; long ones wrap rather than scroll the dialog sideways. */
+.plan-command pre {
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-raised);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.85rem;
+}
+
+.plan-command-copy {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.plan-help ul {
+  margin: 0.4rem 0 0;
+  padding-inline-start: 1.1rem;
+}

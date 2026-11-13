@@ -1,6 +1,6 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 import { addVia, mockIpc } from './mockIpc';
 import { tagsOf } from '../support/tags';
 
@@ -243,4 +243,67 @@ test('copies tags from the inspected file to other files through review', async 
   await plan.getByText('Show the tags').click();
   await expect(plan).toContainText('IFD0:Make = Canon, XMP-dc:Subject = bee, two, words');
   expect(await violations(page)).toEqual([]);
+});
+
+/** Presses Tab until `target` has focus: proves it is reachable by keyboard alone. */
+async function tabTo(page: Page, target: Locator, limit = 40) {
+  for (let step = 0; step < limit; step++) {
+    if (await target.evaluate((node) => node === document.activeElement)) return;
+    await page.keyboard.press('Tab');
+  }
+  await expect(target).toBeFocused();
+}
+
+// @req UX-004, UX-007, FR-015, SEC-004
+test('reviews, copies the command and applies with the keyboard alone', async ({
+  page,
+  context,
+}) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await mockIpc(page, [PHOTO]);
+  await page.goto('/');
+  await addVia(page, 'Files…');
+  const metadata = page.getByRole('region', { name: 'Metadata' });
+  await metadata.getByRole('button', { name: 'Edit IFD0:Make' }).focus();
+  await page.keyboard.press('Enter');
+  const editor = page.getByRole('dialog', { name: 'Edit tag' });
+  await editor.getByRole('textbox', { name: 'New value' }).fill('Nikon');
+  await page.keyboard.press('Control+Enter');
+  await tabTo(page, editor.getByRole('button', { name: 'Stage change' }));
+  await page.keyboard.press('Enter');
+
+  const actions = page.getByRole('button', { name: /Actions \(1 staged\)/ });
+  await tabTo(page, actions);
+  await page.keyboard.press('Enter');
+  await tabTo(page, page.getByRole('button', { name: 'Review changes…' }));
+  await page.keyboard.press('Enter');
+  const review = page.getByRole('dialog', { name: 'Review changes' });
+  await expect(review.getByText(/would change/)).toBeVisible();
+
+  // The command, for this system's shell, copied with the keyboard.
+  await tabTo(page, review.getByText('ExifTool command'));
+  await page.keyboard.press('Enter');
+  await tabTo(page, review.getByRole('button', { name: 'Copy the command for photo.jpg' }));
+  await page.keyboard.press('Enter');
+  await expect(review.getByText('Copied')).toBeVisible();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    '/usr/bin/exiftool -IFD0:Make=Nikon -- /home/user/photo.jpg',
+  );
+  expect(await violations(page)).toEqual([]);
+
+  // Backups off and back on through the confirmation, then apply.
+  await tabTo(page, review.getByRole('checkbox', { name: /Keep a backup/ }));
+  await page.keyboard.press('Space');
+  await tabTo(page, review.getByRole('button', { name: 'Apply without backups…' }));
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('button', { name: 'Keep backups' })).toBeFocused();
+  await page.keyboard.press('Enter');
+  await tabTo(page, review.getByRole('button', { name: 'Apply to 1 file' }));
+  await page.keyboard.press('Enter');
+  await expect(review.getByRole('button', { name: 'Done' })).toBeFocused();
+  await page.keyboard.press('Enter');
+
+  // The staged list emptied, so focus lands on the Actions heading, not on the page.
+  await expect(review).toBeHidden();
+  await expect(page.locator('#actions-drawer-toggle')).toBeFocused();
 });

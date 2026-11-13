@@ -760,7 +760,10 @@ describe('applying a reviewed plan', () => {
     answerReads([file('/a.jpg', { tags: tags('Nikon') })]);
     await user.click(screen.getByRole('button', { name: /Actions \(1 staged\)/ }));
     await user.click(screen.getByRole('button', { name: 'Review changes…' }));
-    await user.click(await screen.findByRole('button', { name: 'Apply to 1 file' }));
+    // Nothing writes before the explicit Apply in the review (SEC-004).
+    const apply = await screen.findByRole('button', { name: 'Apply to 1 file' });
+    expect(ipc.applyPlan).not.toHaveBeenCalled();
+    await user.click(apply);
     expect(ipc.applyPlan).toHaveBeenCalledWith(3, 'keepBackups');
 
     expect(await screen.findByText(/No staged changes/)).toBeTruthy();

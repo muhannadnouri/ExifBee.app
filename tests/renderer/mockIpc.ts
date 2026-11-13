@@ -165,6 +165,20 @@ export async function mockIpc(page: Page, reads: MockRead[] = SAMPLE_READS) {
                 : [],
               warnings: [],
               backup: locked ? null : `${read?.sourceFile}_original`,
+              commands: locked
+                ? null
+                : {
+                    posix: {
+                      keepBackups: `/usr/bin/exiftool -IFD0:Make=Nikon -- ${read?.sourceFile}`,
+                      overwriteOriginals: `/usr/bin/exiftool -overwrite_original -IFD0:Make=Nikon -- ${read?.sourceFile}`,
+                    },
+                    powershell: {
+                      keepBackups: `& '/usr/bin/exiftool' '-IFD0:Make=Nikon' '--' '${read?.sourceFile}'`,
+                      overwriteOriginals: `& '/usr/bin/exiftool' '-overwrite_original' '-IFD0:Make=Nikon' '--' '${read?.sourceFile}'`,
+                    },
+                    exact: true,
+                    systemShell: 'posix',
+                  },
               changes: staged.changes.map((change) => {
                 if (change.kind === 'deleteGroup')
                   return {

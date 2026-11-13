@@ -2,7 +2,7 @@
 import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ApplyResult, FilePlan, StagedFile } from '../../lib/ipc';
+import type { ApplyResult, FilePlan, PlanCommands, StagedFile } from '../../lib/ipc';
 import { PlanPreviewDialog } from './PlanPreviewDialog';
 
 const ipc = vi.hoisted(() => ({
@@ -35,6 +35,20 @@ const ready: FilePlan = {
   problems: [],
   warnings: ['A backup from an earlier change already exists (/real/photo.jpg_original).'],
   backup: null,
+  commands: {
+    posix: {
+      keepBackups: "/usr/bin/exiftool -IFD0:Make=Nikon -- '/real/photo.jpg'",
+      overwriteOriginals:
+        "/usr/bin/exiftool -overwrite_original -IFD0:Make=Nikon -- '/real/photo.jpg'",
+    },
+    powershell: {
+      keepBackups: "& '/usr/bin/exiftool' '-IFD0:Make=Nikon' '--' '/real/photo.jpg'",
+      overwriteOriginals:
+        "& '/usr/bin/exiftool' '-overwrite_original' '-IFD0:Make=Nikon' '--' '/real/photo.jpg'",
+    },
+    exact: true,
+    systemShell: 'posix',
+  },
   changes: [
     {
       target: 'IFD0:Make',
@@ -71,6 +85,7 @@ const skipped: FilePlan = {
   problems: ['The file changed after it was read; open it again to see its current metadata.'],
   warnings: [],
   backup: null,
+  commands: null,
   changes: [],
 };
 
@@ -331,5 +346,91 @@ describe('apply', () => {
     render(<PlanPreviewDialog files={staged} onApplied={noop} onClose={noop} />);
     await user.click(await screen.findByRole('button', { name: 'Apply to 1 file' }));
     expect(await screen.findByText('review them again')).toBeTruthy();
+  });
+});
+
+// @req FR-015, UX-007, UX-004
+describe('command and help', () => {
+  it('shows the exact command for the chosen shell and backup choice, and copies it', async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    ipc.planChanges.mockResolvedValue({ planId: 1, files: [ready] });
+    render(<PlanPreviewDialog files={staged} onApplied={noop} onClose={noop} />);
+    await user.click(await screen.findByText('ExifTool command'));
+    const command = () => screen.getByLabelText('ExifTool command for link.jpg').textContent;
+    expect(command()).toBe("/usr/bin/exiftool -IFD0:Make=Nikon -- '/real/photo.jpg'");
+    await user.click(screen.getByRole('button', { name: 'Copy the command for link.jpg' }));
+    expect(writeText).toHaveBeenCalledWith(
+      "/usr/bin/exiftool -IFD0:Make=Nikon -- '/real/photo.jpg'",
+    );
+    expect(await screen.findByText('Copied')).toBeTruthy();
+    // Unticking backups shows the command that would really run.
+    await user.click(screen.getByRole('checkbox', { name: /Keep a backup/ }));
+    expect(command()).toContain('-overwrite_original');
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Shell for link.jpg' }),
+      'powershell',
+    );
+    expect(command()).toBe(
+      "& '/usr/bin/exiftool' '-overwrite_original' '-IFD0:Make=Nikon' '--' '/real/photo.jpg'",
+    );
+  });
+
+  it('does not offer to copy a command that would not name the same file', async () => {
+    const user = userEvent.setup();
+    const commands = { ...(ready.commands as PlanCommands), exact: false };
+    ipc.planChanges.mockResolvedValue({ planId: 1, files: [{ ...ready, commands }] });
+    render(<PlanPreviewDialog files={staged} onApplied={noop} onClose={noop} />);
+    await user.click(await screen.findByText('ExifTool command'));
+    expect(screen.getByText(/this command is not exact/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Copy the command/ })).toBeNull();
+  });
+
+  it('explains backups, then guides to the next step and keeps focus after applying', async () => {
+    const user = userEvent.setup();
+    const onReviewAgain = vi.fn();
+    ipc.planChanges.mockResolvedValue({ planId: 1, files: [ready, skipped] });
+    ipc.applyPlan.mockResolvedValue({
+      files: [
+        {
+          id: 'f1',
+          name: 'link.jpg',
+          outcome: 'changed',
+          message: null,
+          backup: null,
+          warnings: [],
+          details: [],
+          exitCode: 0,
+        },
+        {
+          id: 'f2',
+          name: 'old.jpg',
+          outcome: 'skipped',
+          message: 'changed',
+          backup: null,
+          warnings: [],
+          details: [],
+          exitCode: null,
+        },
+      ],
+    });
+    render(
+      <PlanPreviewDialog
+        files={staged}
+        onApplied={noop}
+        onReviewAgain={onReviewAgain}
+        onClose={noop}
+      />,
+    );
+    await user.click(await screen.findByText('About backups'));
+    expect(screen.getByText(/ExifBee never deletes backups/)).toBeTruthy();
+    expect(screen.getByText(/replace it with its/)).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Apply to 1 file' }));
+    const doneButton = await screen.findByRole('button', { name: 'Done' });
+    expect(document.activeElement).toBe(doneButton);
+    expect(screen.getByText(/Skipped and failed files keep their staged changes/)).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Review again' }));
+    expect(onReviewAgain).toHaveBeenCalledOnce();
   });
 });

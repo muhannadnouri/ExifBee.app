@@ -175,11 +175,11 @@ fn a_ready_plan_runs_to_exactly_the_planned_result() {
             &photo.display().to_string(),
         ]
     );
-    let command = plan.command.as_ref().unwrap();
+    let commands = plan.commands.as_ref().unwrap();
     // The runnable form of the same arguments (quoting proven by S2-T02's shell tests).
-    assert!(command.exact);
+    assert!(commands.exact);
     assert_eq!(
-        command.text,
+        commands.posix.keep_backups,
         format!(
             "{} -XMP-dc:All= -IFD0:Artist= -IFD0:Make=Nikon '-XMP-dc:Title=New title' \
              -XMP-dc:Creator=Ann -- '{}'",
@@ -188,9 +188,31 @@ fn a_ready_plan_runs_to_exactly_the_planned_result() {
         )
     );
 
-    // Running exactly those arguments gives the planned result and ExifTool's backup.
-    let run = planner.engine.cli(plan.args.as_ref().unwrap());
-    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    // The overwrite form differs only by ExifTool's option; PowerShell gets its own quoting.
+    assert_eq!(
+        commands.posix.overwrite_originals,
+        commands.posix.keep_backups.replacen(
+            " -XMP-dc:All=",
+            " -overwrite_original -XMP-dc:All=",
+            1
+        )
+    );
+    assert!(
+        commands.powershell.keep_backups.starts_with("& '"),
+        "{commands:?}"
+    );
+
+    // The copied command, pasted into a real shell, gives the planned result and the backup.
+    let run = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(&commands.posix.keep_backups)
+        .output()
+        .unwrap();
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
     let read = planner.engine.read(&photo);
     assert_eq!(value(&read, "IFD0:Make"), json!("Nikon"));
     assert_eq!(value(&read, "XMP-dc:Title"), json!("New title"));
